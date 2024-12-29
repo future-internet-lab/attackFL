@@ -1,0 +1,30 @@
+name: Federated Learning poisoning attack testbed
+server:
+  num-round: 50
+  clients: 30
+  model: LeNet_MNIST
+  data-name: MNIST
+  parameters:
+    load: True
+    save: True
+  validation: True
+  data-mode: uneven
+  data-distribution:
+    num-data-range:
+      - 100
+      - 100
+    non-iid-rate: 1
+    refresh-each-round: False
+  random-seed: 1
+
+rabbit:
+  address: 127.0.0.1
+  username: admin
+  password: admin
+
+log_path: .
+
+learning:
+  learning-rate: 0.05
+  momentum: 0.5
+  batch-size: 128

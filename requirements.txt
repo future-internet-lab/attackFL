@@ -1,0 +1,8 @@
+pika
+torch
+torchvision
+numpy
+requests
+tqdm
+pyyaml
+scikit-learn
