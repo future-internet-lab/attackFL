@@ -32,6 +32,7 @@ class RpcClient:
         self.attack_mode = None
         self.attack_round = 0
         self.attack_args = None
+        self.genuine_models = None
 
         self.channel = None
         self.connection = None
@@ -82,12 +83,15 @@ class RpcClient:
                 self.model.load_state_dict(state_dict)
 
             label_counts = self.response["label_counts"]
-            if self.attack and self.training_round >= self.attack_round:
+            genuine_models = self.response["genuine_models"]
+            if self.genuine_models and not genuine_models:
+                self.genuine_models = genuine_models
+
+            if self.attack and self.training_round >= self.attack_round and self.genuine_models and len(self.genuine_models) > 0:
                 src.Log.print_with_color(f"[===] Client is start attacking {self.attack_mode} ...", "red")
                 # Apply difference attack algorithm here
-                genuine_models = self.response["genuine_models"]
-                src.Log.print_with_color(f"[<<<] Attacker received {len(genuine_models)} genuine models", "blue")
-                result, model_state_dict = self.malicious_training(genuine_models)
+                src.Log.print_with_color(f"[<<<] Attacker received {len(self.genuine_models)} genuine models", "blue")
+                result, model_state_dict = self.malicious_training(self.genuine_models)
             else:
                 result, model_state_dict = self.genuine_training(label_counts)
 
@@ -103,10 +107,23 @@ class RpcClient:
             return False
 
     def malicious_training(self, genuine_models):
-        # TODO: apply Min-Max and Min-Sum
-        if self.attack_mode == "MPAF":
+        if self.attack_mode == "Random":
             base_model = src.Utils.create_random_base_model(self.model.state_dict(), perturbation=self.attack_args[0])
             return True, base_model
+        elif self.attack_mode == "Min-Max":
+            attack_model = src.Utils.create_min_max_model(self.model.to('cpu').state_dict(), genuine_models,
+                                                          step=self.attack_args[0])
+            if attack_model:
+                return True, attack_model
+            else:
+                return False, None
+        elif self.attack_mode == "Min-Sum":
+            attack_model = src.Utils.create_min_sum_model(self.model.to('cpu').state_dict(), genuine_models,
+                                                          step=self.attack_args[0])
+            if attack_model:
+                return True, attack_model
+            else:
+                return False, None
         else:
             raise ValueError(f"Attack client not contain '{self.attack_mode}' algorithm.")
 

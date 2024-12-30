@@ -129,10 +129,22 @@ python client.py --device cpu
 
 ### Client attack
 
-#### MPAF
+#### Random
 
 ```commandline
-python client.py --attack True --attack_mode MPAF --attack_round 10 --attack_args 0.1
+python client.py --attack True --attack_mode Random --attack_round 30 --attack_args 0.5
+```
+
+#### Min-Max
+
+```commandline
+python client.py --attack True --attack_mode Min-Max --attack_round 2 --attack_args 0.00001
+```
+
+#### Min-Sum
+
+```commandline
+python client.py --attack True --attack_mode Min-Sum --attack_round 2 --attack_args 0.00001
 ```
 
 ## Parameter Files

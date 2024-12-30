@@ -15,8 +15,8 @@ parser = argparse.ArgumentParser(description="Split learning framework")
 parser.add_argument('--device', type=str, required=False, help='Device of client')
 parser.add_argument('--attack', type=bool, required=False,
                     default=False, help='Set to True to enable attack mode, False otherwise.')
-parser.add_argument('--attack_mode', type=str, choices=['MPAF', 'Min-Max', 'Min-Sum'],
-                    help="Mode of operation when attack is enabled (e.g., MPAF or Min-Max, Min-Sum ...).")
+parser.add_argument('--attack_mode', type=str, choices=['Random', 'Min-Max', 'Min-Sum'],
+                    help="Mode of operation when attack is enabled (e.g., Random or Min-Max, Min-Sum ...).")
 parser.add_argument('--attack_round', type=int,
                     help="Client attack at round.")
 parser.add_argument('--attack_args', type=float, nargs='+', required=False,

@@ -194,7 +194,7 @@ class Server:
                 client_size = message["size"]
                 self.all_model_parameters.append({'client_id': client_id, 'weight': model_state_dict,
                                                   'size': client_size})
-                if client_id not in self.list_attack_clients:
+                if str(client_id) not in self.list_attack_clients:
                     self.all_genuine_parameters.append(model_state_dict)
 
             # If consumed all client's parameters
