@@ -135,6 +135,12 @@ python client.py --device cpu
 python client.py --attack True --attack_mode Random --attack_round 30 --attack_args 0.5
 ```
 
+#### LIE
+
+```commandline
+python client.py --attack True --attack_mode LIE --attack_round 1 --attack_args 0.74
+```
+
 #### Min-Max
 
 ```commandline

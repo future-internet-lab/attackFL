@@ -38,8 +38,20 @@ def compute_distance(state_dict1, state_dict2):
     return total_distance
 
 
-### ATTACK SCHEMES
+def calculate_mean_and_std(state_dicts):
+    mean_std_dict = {}
 
+    for key in state_dicts[0].keys():
+        if state_dicts[0][key].dtype != torch.long:
+            params = torch.stack([state_dict[key] for state_dict in state_dicts])
+            mean_std_dict[key] = {
+                'mean': torch.mean(params, dim=0),
+                'std': torch.std(params, dim=0)
+            }
+
+    return mean_std_dict
+
+### ATTACK SCHEMES
 
 def create_random_base_model(state_dict, perturbation=0.1):
     base_model = copy.deepcopy(state_dict)
@@ -107,4 +119,14 @@ def create_min_sum_model(state_dict, all_genuine_models, step=0.001):
             malicious_distance = sum_distance
 
     return malicious_model
+
+
+def create_LIE_state_dict(list_dict, scaling_factor=0.74):
+    mean_std_dict = calculate_mean_and_std(list_dict)
+    malicious_state_dict = list_dict[0]
+
+    for key, stats in mean_std_dict.items():
+        malicious_state_dict[key] = stats['mean'] + scaling_factor * stats['std']
+
+    return malicious_state_dict
 

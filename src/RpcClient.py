@@ -124,6 +124,9 @@ class RpcClient:
                 return True, attack_model
             else:
                 return False, None
+        elif self.attack_mode == "LIE":
+            attack_model = src.Utils.create_LIE_state_dict(genuine_models, scaling_factor=self.attack_args[0])
+            return True, attack_model
         else:
             raise ValueError(f"Attack client not contain '{self.attack_mode}' algorithm.")
 
