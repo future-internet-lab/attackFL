@@ -17,7 +17,6 @@ numpy
 requests
 tqdm
 pyyaml
-scikit-learn
 ```
 
 Set up a RabbitMQ server for message communication over the network environment. `docker-compose.yaml` file:

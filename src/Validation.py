@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 import torch.nn.functional as F
@@ -7,7 +6,6 @@ import numpy as np
 import math
 
 from torch.utils.data import DataLoader
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 import src.Model
 import src.Utils
