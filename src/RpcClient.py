@@ -84,7 +84,7 @@ class RpcClient:
 
             label_counts = self.response["label_counts"]
             genuine_models = self.response["genuine_models"]
-            if self.genuine_models and not genuine_models:
+            if self.attack and genuine_models:
                 self.genuine_models = genuine_models
 
             if self.attack and self.training_round >= self.attack_round and self.genuine_models and len(self.genuine_models) > 0:
