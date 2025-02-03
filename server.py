@@ -99,8 +99,8 @@ class Server:
         if server_mode == "hyper":
             if not self.net and not self.hnet:
                 if model_name == "RNNModel":
-                    self.net = src.Model.RNNModel(7, 16)
-                    self.hnet = src.Model.RNNHypernetwork(self.net, self.total_clients, 3, 100, False, 1)
+                    self.net = src.Model.RNNModel(7, 16).to(device)
+                    self.hnet = src.Model.RNNHypernetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
             if load_parameters:
@@ -305,7 +305,7 @@ class Server:
             weights = self.hnet(torch.tensor([node_id], dtype=torch.long).to(device))
             self.optimizer.zero_grad()
 
-            inner_state = self.net.state_dict()
+            inner_state = OrderedDict({k: tensor.data for k, tensor in weights.items()})
             final_state = self.all_model_parameters[node_id]
 
             delta_theta = OrderedDict({k: inner_state[k] - final_state[k] for k in weights.keys()})

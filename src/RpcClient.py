@@ -71,7 +71,7 @@ class RpcClient:
             self.training_round += 1
             if self.model is None:
                 if model_name == "RNNModel":
-                    pass
+                    self.model = src.Model.RNNModel(7, 16).to(self.device)
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
 
@@ -132,7 +132,7 @@ class RpcClient:
         batch_size = self.response["batch_size"]
         lr = self.response["lr"]
         momentum = self.response["momentum"]
-        src.Log.print_with_color(f"Data range of client: {data_ranges.tolist()}", "yellow")
+        src.Log.print_with_color(f"Data range of client: {data_ranges}", "yellow")
 
         if data_name and not self.train_set:
             if data_name == "ICU":

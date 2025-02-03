@@ -15,14 +15,14 @@ from tqdm import tqdm
 
 class Validation:
     def __init__(self, model_name, data_name, logger):
-        self.model_name = model_name
         self.data_name = data_name
         self.logger = logger
+        self.model = None
 
-        klass = getattr(src.Model, self.model_name)
-        if klass is None:
-            raise ValueError(f"Class '{model_name}' does not exist.")
-        self.model = klass()
+        if model_name == "RNNModel":
+            self.model = src.Model.RNNModel(7, 16)
+        else:
+            raise ValueError(f"Model name '{model_name}' is not valid.")
 
         self.test_loader = None
         if self.data_name and not self.test_loader:
