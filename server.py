@@ -306,9 +306,9 @@ class Server:
             self.optimizer.zero_grad()
 
             inner_state = OrderedDict({k: tensor.data for k, tensor in weights.items()})
-            final_state = self.all_model_parameters[node_id]
+            final_state = self.all_model_parameters[node_id]["weight"]
 
-            delta_theta = OrderedDict({k: inner_state[k] - final_state[k] for k in weights.keys()})
+            delta_theta = OrderedDict({k: inner_state[k] - final_state[k].to(device) for k in weights.keys()})
 
             hnet_grads = torch.autograd.grad(list(weights.values()), self.hnet.parameters(),
                                              grad_outputs=list(delta_theta.values()))
