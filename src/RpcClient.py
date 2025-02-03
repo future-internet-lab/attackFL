@@ -3,14 +3,10 @@ import pickle
 import pika
 import torch
 import random
+import gzip
 
 import torch.nn as nn
-import torchvision
-import torchvision.transforms as transforms
-
 from pika.exceptions import AMQPConnectionError
-from collections import defaultdict
-from tqdm import tqdm
 
 import src.Log
 import src.Model
@@ -74,15 +70,16 @@ class RpcClient:
             model_name = self.response["model_name"]
             self.training_round += 1
             if self.model is None:
-                klass = getattr(src.Model, model_name)
-                self.model = klass()
-                self.model.to(self.device)
+                if model_name == "RNNModel":
+                    pass
+                else:
+                    raise ValueError(f"Model name '{model_name}' is not valid.")
 
             # Read parameters and load to model
             if state_dict:
                 self.model.load_state_dict(state_dict)
 
-            label_counts = self.response["label_counts"]
+            data_ranges = self.response["data_ranges"]
             genuine_models = self.response["genuine_models"]
             if self.attack and genuine_models:
                 self.genuine_models = genuine_models
@@ -93,12 +90,12 @@ class RpcClient:
                 src.Log.print_with_color(f"[<<<] Attacker received {len(self.genuine_models)} genuine models", "blue")
                 result, model_state_dict = self.malicious_training(self.genuine_models)
             else:
-                result, model_state_dict = self.genuine_training(label_counts)
+                result, model_state_dict = self.genuine_training(data_ranges)
 
             if self.device != "cpu":
                 for key in model_state_dict:
                     model_state_dict[key] = model_state_dict[key].to('cpu')
-            data = {"action": "UPDATE", "client_id": self.client_id, "result": result, "size": sum(label_counts),
+            data = {"action": "UPDATE", "client_id": self.client_id, "result": result, "size": data_ranges,
                     "message": "Sent parameters to Server", "parameters": model_state_dict}
             src.Log.print_with_color("[>>>] Client sent parameters to server", "red")
             self.send_to_server(data)
@@ -130,41 +127,22 @@ class RpcClient:
         else:
             raise ValueError(f"Attack client not contain '{self.attack_mode}' algorithm.")
 
-    def genuine_training(self, label_counts):
+    def genuine_training(self, data_ranges):
         data_name = self.response["data_name"]
         batch_size = self.response["batch_size"]
         lr = self.response["lr"]
         momentum = self.response["momentum"]
-        src.Log.print_with_color(f"Label distribution of client: {label_counts.tolist()}", "yellow")
+        src.Log.print_with_color(f"Data range of client: {data_ranges.tolist()}", "yellow")
 
-        if data_name and not self.train_set and not self.label_to_indices:
-            if data_name == "MNIST":
-                transform_train = transforms.Compose([
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.5,), (0.5,))
-                ])
-                self.train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                                            transform=transform_train)
-            elif data_name == "CIFAR10":
-                transform_train = transforms.Compose([
-                    transforms.RandomCrop(32, padding=4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-                ])
-                self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
-                                                              transform=transform_train)
+        if data_name and not self.train_set:
+            if data_name == "ICU":
+                with gzip.open("train_dataset.pkl.gz", "rb") as f:
+                    self.train_set = pickle.load(f)
             else:
                 raise ValueError(f"Data name '{data_name}' is not valid.")
 
-            self.label_to_indices = defaultdict(list)
-            for idx, (_, label) in tqdm(enumerate(self.train_set)):
-                self.label_to_indices[int(label)].append(idx)
-
-        selected_indices = []
-        for label, count in enumerate(label_counts):
-            selected_indices.extend(random.sample(self.label_to_indices[label], count))
-
+        num_data = random.randrange(data_ranges[0], data_ranges[1]+1)
+        selected_indices = random.sample(range(len(self.train_set)), num_data)
         subset = torch.utils.data.Subset(self.train_set, selected_indices)
 
         train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)

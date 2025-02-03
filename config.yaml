@@ -2,19 +2,16 @@ name: Federated Learning poisoning attack testbed
 server:
   num-round: 50
   clients: 30
-  model: LeNet_MNIST
-  data-name: MNIST
+  mode: hyper
+  model: RNNModel
+  data-name: ICU
   parameters:
     load: True
-    save: True
   validation: True
-  data-mode: uneven
   data-distribution:
     num-data-range:
       - 100
       - 100
-    non-iid-rate: 1
-    refresh-each-round: False
   random-seed: 1
 
 rabbit:

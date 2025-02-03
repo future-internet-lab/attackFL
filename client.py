@@ -60,17 +60,21 @@ credentials = pika.PlainCredentials(username, password)
 
 
 def train_on_device(model, lr, momentum, trainloader, criterion):
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    # optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
 
     model.train()
-    for (training_data, label) in tqdm(trainloader):
-        if training_data.size(0) == 1:
+    for vitals, labs, labels in tqdm(trainloader):
+        if vitals.size(0) == 1 or labs.size(0) == 1:
             continue
-        training_data = training_data.to(device)
-        label = label.to(device)
+        vitals = vitals.to(device)
+        labs = labs.to(device)
+        labels = labels.to(device)
+        labels = labels.unsqueeze(1)
+
         optimizer.zero_grad()
-        output = model(training_data)
-        loss = criterion(output, label)
+        output = model(vitals, labs)
+        loss = criterion(output, labels)
 
         if torch.isnan(loss).any():
             src.Log.print_with_color("NaN detected in loss, stop training", "yellow")

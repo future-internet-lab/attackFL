@@ -4,6 +4,25 @@ import copy
 
 import torch
 
+from torch.utils.data import Dataset
+
+
+class ICUData(Dataset):
+    def __init__(self, dataframe, vitals_cols, labs_cols, label_col):
+        self.vitals = dataframe[vitals_cols].values
+        self.labs = dataframe[labs_cols].values
+        self.labels = dataframe[label_col].values
+
+        self.vitals = torch.tensor(self.vitals, dtype=torch.float32)
+        self.labs = torch.tensor(self.labs, dtype=torch.float32)
+        self.labels = torch.tensor(self.labels, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        return self.vitals[idx], self.labs[idx], self.labels[idx]
+
 
 def non_iid_rate(num_data, rate):
     result = []

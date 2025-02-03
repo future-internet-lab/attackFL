@@ -56,21 +56,19 @@ name: Coordinated Federated Learning
 server:   # server configuration
   num-round: 2  # number of training rounds
   clients: 3    # number of FL clients
-  model: ResNet50     # class name of DNN model
-  data-name: CIFAR10  # training data: MNIST, CIFAR10
+  mode: hyper   # server mode: fedavg or hyper
+  model: RNNModel     # class name of DNN model
+  data-name: ICU      # training data: MNIST, CIFAR10
   parameters:
     load: False     # allow to load parameters file
     save: False     # allow to save parameters file
                     # if turn on, server will be averaging all parameters
   validation: True  # allow to validate on server-side
   ### algorithm
-  data-mode: even         # data distribution `even` or `uneven`
   data-distribution:      # data distribution config
     num-data-range:       # minimum and maximum number of label's data
       - 0
       - 500
-    non-iid-rate: 0.5     # non-IID rate, range (0, 1]
-    refresh-each-round: True  # if set True, non-IID on label will be reset on each round
   random-seed: 1
 
 rabbit:   # RabbitMQ connection configuration
@@ -92,16 +90,7 @@ This configuration is use for server and all clients.
 
 #### For MNIST
 ```
-SimpleCNN
-LeNet_MNIST
-```
-
-#### For CIFAR10
-```
-LeNet_CIFAR10
-MobileNetV2
-ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
-VGG16, VGG19
+RNNModel
 ```
 
 ## How to Run
