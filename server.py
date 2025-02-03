@@ -88,7 +88,7 @@ class Server:
         self.list_attack_clients = []
         self.all_model_parameters = []
         self.all_genuine_parameters = []
-        self.avg_state_dict = None
+        self.final_state_dict = None
         self.round_result = True
 
         self.selected_client = []
@@ -212,14 +212,14 @@ class Server:
                 self.train_hyper()
         # Server validation
         if validation and self.round_result:
-            self.round_result = self.validation.test(self.avg_state_dict, device)
+            self.round_result = self.validation.test(self.final_state_dict, device)
 
         if not self.round_result:
             src.Log.print_with_color(f"Training failed!", "yellow")
         else:
             # Save to files
             if server_mode == "fedavg":
-                torch.save(self.avg_state_dict, f'{model_name}.pth')
+                torch.save(self.final_state_dict, f'{model_name}.pth')
             elif server_mode == "hyper":
                 torch.save(self.hnet.state_dict(), f'{model_name}_hyper.pth')
             self.round -= 1
@@ -298,30 +298,59 @@ class Server:
     def train_hyper(self):
         """
         Consuming all client's weight from `self.all_model_parameters` and start training hyper model
-        :return: New hyper model
+        :return: Global weight on `self.final_state_dict`
         """
         for node_id in self.selected_client:
             self.hnet.train()
             weights = self.hnet(torch.tensor([node_id], dtype=torch.long).to(device))
+
+            # Instead of loading weights directly, update net's parameters using the generated weights
+            for name, param in self.net.named_parameters():
+                param.data = weights[name]
+
             self.optimizer.zero_grad()
 
             inner_state = OrderedDict({k: tensor.data for k, tensor in weights.items()})
-            final_state = self.all_model_parameters[node_id]["weight"]
+            final_state = None
+            for w in self.all_model_parameters:
+                if str(w["client_id"]) == self.list_clients[node_id]:
+                    final_state = w["weight"]
+                    break
+            final_state = {k: v.to(device) for k, v in final_state.items()}
+            delta_theta = OrderedDict({k: inner_state[k] - final_state[k] for k in weights.keys()})
 
-            delta_theta = OrderedDict({k: inner_state[k] - final_state[k].to(device) for k in weights.keys()})
+            # Calculate gradients with respect to hypernetwork parameters
+            hnet_grads = torch.autograd.grad(
+                # Get the outputs from the hypernetwork (weights)
+                outputs=list(weights.values()),
+                # Get the inputs that need gradients (hypernetwork parameters)
+                inputs=self.hnet.parameters(),
+                # Specify the gradient with respect to the outputs
+                grad_outputs=list(delta_theta.values()),
+                # Allows for unused parameters
+                allow_unused=True
+            )
 
-            hnet_grads = torch.autograd.grad(list(weights.values()), self.hnet.parameters(),
-                                             grad_outputs=list(delta_theta.values()))
-
+            # Update the hypernetwork parameters
             for p, g in zip(self.hnet.parameters(), hnet_grads):
-                p.grad = g
+                # Check if gradient is not None
+                if g is not None:
+                    p.grad = g
 
             self.optimizer.step()
+
+        # Update new clients' weight
+        for i in range(len(self.all_model_parameters)):
+            c = self.list_clients.index(str(self.all_model_parameters[i]["client_id"]))
+            model_dict = self.hnet(torch.tensor([c], dtype=torch.long).to(device))
+            self.all_model_parameters[i]["weight"] = model_dict
+
+        self.avg_all_parameters()
 
     def avg_all_parameters(self):
         """
         Consuming all client's weight from `self.all_model_parameters` - a list contain all client's weight
-        :return: Global weight on `self.avg_state_dict`
+        :return: Global weight on `self.final_state_dict`
         """
         # Average all client parameters
         num_models = len(self.all_model_parameters)
@@ -329,16 +358,17 @@ class Server:
         if num_models == 0:
             return
 
-        self.avg_state_dict = self.all_model_parameters[0]['weight']
+        self.final_state_dict = self.all_model_parameters[0]['weight']
         all_client_sizes = [item['size'] for item in self.all_model_parameters]
+        print(all_client_sizes)
 
-        for key in self.avg_state_dict.keys():
-            if self.avg_state_dict[key].dtype != torch.long:
-                self.avg_state_dict[key] = sum(self.all_model_parameters[i]['weight'][key] * all_client_sizes[i]
-                                               for i in range(num_models)) / sum(all_client_sizes)
+        for key in self.final_state_dict.keys():
+            if self.final_state_dict[key].dtype != torch.long:
+                self.final_state_dict[key] = sum(self.all_model_parameters[i]['weight'][key] * all_client_sizes[i]
+                                                 for i in range(num_models)) / sum(all_client_sizes)
             else:
-                self.avg_state_dict[key] = sum(self.all_model_parameters[i]['weight'][key] * all_client_sizes[i]
-                                               for i in range(num_models)) // sum(all_client_sizes)
+                self.final_state_dict[key] = sum(self.all_model_parameters[i]['weight'][key] * all_client_sizes[i]
+                                                 for i in range(num_models)) // sum(all_client_sizes)
 
 
 def delete_old_queues():

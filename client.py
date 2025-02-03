@@ -59,8 +59,8 @@ else:
 credentials = pika.PlainCredentials(username, password)
 
 
-def train_on_device(model, lr, momentum, trainloader, criterion):
-    # optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+def train_on_device(model, lr, momentum, trainloader):
+    criterion = torch.nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     model.train()

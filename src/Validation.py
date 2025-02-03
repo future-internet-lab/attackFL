@@ -35,8 +35,10 @@ class Validation:
 
         self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=100, shuffle=False)
 
-    def test(self, avg_state_dict, device):
-        self.model.load_state_dict(avg_state_dict)
+    def test(self, final_state_dict, device):
+        self.model.to(device)
+        for name, param in self.model.named_parameters():
+            param.data = final_state_dict[name]
         # evaluation mode
         self.model.eval()
         if self.data_name == "ICU":
@@ -56,6 +58,9 @@ class Validation:
                 labels = labels.to(device).unsqueeze(1)
 
                 outputs = self.model(vitals, labs)
+                if torch.isnan(outputs).any():
+                    src.Log.print_with_color("NaN detected in output, training false", "yellow")
+                    return False
 
                 all_labels.append(labels.cpu().numpy())
                 all_outputs.append(outputs.cpu().numpy())
@@ -68,6 +73,6 @@ class Validation:
         fpr, tpr, thresholds = roc_curve(all_labels, all_outputs)
         roc_auc = auc(fpr, tpr)
 
-        print(f"False Positive Rate: {fpr:.4f}, True Positive Rate: {tpr:.4f}, ROC_AUC: {roc_auc:.4f}")
-        self.logger.log_info(f"False Positive Rate: {fpr:.4f}, True Positive Rate: {tpr:.4f}, ROC_AUC: {roc_auc:.4f}")
+        print(f"False Positive Rate: {fpr}, True Positive Rate: {tpr}, ROC_AUC: {roc_auc:.4f}")
+        self.logger.log_info(f"False Positive Rate: {fpr}, True Positive Rate: {tpr}, ROC_AUC: {roc_auc:.4f}")
         return True

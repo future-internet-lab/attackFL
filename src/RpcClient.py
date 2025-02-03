@@ -5,7 +5,6 @@ import torch
 import random
 import gzip
 
-import torch.nn as nn
 from pika.exceptions import AMQPConnectionError
 
 import src.Log
@@ -77,12 +76,17 @@ class RpcClient:
 
             # Read parameters and load to model
             if state_dict:
-                self.model.load_state_dict(state_dict)
+                # Instead of loading weights directly, update net's parameters using the generated weights
+                for name, param in self.model.named_parameters():
+                    param.data = state_dict[name]
 
             data_ranges = self.response["data_ranges"]
             genuine_models = self.response["genuine_models"]
             if self.attack and genuine_models:
                 self.genuine_models = genuine_models
+
+            num_data = random.randrange(data_ranges[0], data_ranges[1] + 1)
+            src.Log.print_with_color(f"Number of client's data: {num_data}", "yellow")
 
             if self.attack and self.training_round >= self.attack_round and self.genuine_models and len(self.genuine_models) > 0:
                 src.Log.print_with_color(f"[===] Client is start attacking {self.attack_mode} ...", "red")
@@ -90,12 +94,12 @@ class RpcClient:
                 src.Log.print_with_color(f"[<<<] Attacker received {len(self.genuine_models)} genuine models", "blue")
                 result, model_state_dict = self.malicious_training(self.genuine_models)
             else:
-                result, model_state_dict = self.genuine_training(data_ranges)
+                result, model_state_dict = self.genuine_training(num_data)
 
             if self.device != "cpu":
                 for key in model_state_dict:
                     model_state_dict[key] = model_state_dict[key].to('cpu')
-            data = {"action": "UPDATE", "client_id": self.client_id, "result": result, "size": data_ranges,
+            data = {"action": "UPDATE", "client_id": self.client_id, "result": result, "size": num_data,
                     "message": "Sent parameters to Server", "parameters": model_state_dict}
             src.Log.print_with_color("[>>>] Client sent parameters to server", "red")
             self.send_to_server(data)
@@ -127,12 +131,11 @@ class RpcClient:
         else:
             raise ValueError(f"Attack client not contain '{self.attack_mode}' algorithm.")
 
-    def genuine_training(self, data_ranges):
+    def genuine_training(self, num_data):
         data_name = self.response["data_name"]
         batch_size = self.response["batch_size"]
         lr = self.response["lr"]
         momentum = self.response["momentum"]
-        src.Log.print_with_color(f"Data range of client: {data_ranges}", "yellow")
 
         if data_name and not self.train_set:
             if data_name == "ICU":
@@ -141,16 +144,14 @@ class RpcClient:
             else:
                 raise ValueError(f"Data name '{data_name}' is not valid.")
 
-        num_data = random.randrange(data_ranges[0], data_ranges[1]+1)
+
         selected_indices = random.sample(range(len(self.train_set)), num_data)
         subset = torch.utils.data.Subset(self.train_set, selected_indices)
 
         train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
 
-        criterion = nn.CrossEntropyLoss()
-
         # Stop training, then send parameters to server
-        return self.train_func(self.model, lr, momentum, train_loader, criterion), self.model.state_dict()
+        return self.train_func(self.model, lr, momentum, train_loader), self.model.state_dict()
 
     def connect(self):
         credentials = pika.PlainCredentials(self.username, self.password)
