@@ -69,8 +69,12 @@ class RpcClient:
             model_name = self.response["model_name"]
             self.training_round += 1
             if self.model is None:
-                if model_name == "RNNModel":
-                    self.model = src.Model.RNNModel(7, 16).to(self.device)
+                if model_name == "CNN":
+                    self.model = src.Model.CNNModel(7, 16)
+                elif model_name == "RNN":
+                    self.model = src.Model.RNNModel(7, 16)
+                elif model_name == "Transformer":
+                    self.model = src.Model.TransformerModel(7, 16, 4, 6)
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
 
@@ -136,6 +140,7 @@ class RpcClient:
         batch_size = self.response["batch_size"]
         lr = self.response["lr"]
         momentum = self.response["momentum"]
+        epoch = self.response["epoch"]
 
         if data_name and not self.train_set:
             if data_name == "ICU":
@@ -151,7 +156,7 @@ class RpcClient:
         train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
 
         # Stop training, then send parameters to server
-        return self.train_func(self.model, lr, momentum, train_loader), self.model.state_dict()
+        return self.train_func(self.model, epoch, lr, momentum, train_loader), self.model.state_dict()
 
     def connect(self):
         credentials = pika.PlainCredentials(self.username, self.password)

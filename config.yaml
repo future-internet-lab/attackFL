@@ -3,7 +3,7 @@ server:
   num-round: 50
   clients: 30
   mode: hyper
-  model: RNNModel
+  model: Transformer
   data-name: ICU
   parameters:
     load: True
@@ -22,6 +22,8 @@ rabbit:
 log_path: .
 
 learning:
-  learning-rate: 0.05
+  epoch: 5
+  learning-rate: 0.0005
+  hyper-lr: 0.0005
   momentum: 0.5
   batch-size: 128

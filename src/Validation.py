@@ -19,8 +19,12 @@ class Validation:
         self.logger = logger
         self.model = None
 
-        if model_name == "RNNModel":
+        if model_name == "CNN":
+            self.model = src.Model.CNNModel(7, 16)
+        elif model_name == "RNN":
             self.model = src.Model.RNNModel(7, 16)
+        elif model_name == "Transformer":
+            self.model = src.Model.TransformerModel(7, 16, 4, 6)
         else:
             raise ValueError(f"Model name '{model_name}' is not valid.")
 
@@ -36,9 +40,9 @@ class Validation:
         self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=100, shuffle=False)
 
     def test(self, final_state_dict, device):
-        self.model.to(device)
         for name, param in self.model.named_parameters():
             param.data = final_state_dict[name]
+        self.model.to(device)
         # evaluation mode
         self.model.eval()
         if self.data_name == "ICU":
@@ -69,10 +73,11 @@ class Validation:
         all_labels = np.concatenate(all_labels)
         all_outputs = np.concatenate(all_outputs)
 
-        # Calculate ROC curve
+        # Compute ROC-AUC
         fpr, tpr, thresholds = roc_curve(all_labels, all_outputs)
         roc_auc = auc(fpr, tpr)
 
-        print(f"False Positive Rate: {fpr}, True Positive Rate: {tpr}, ROC_AUC: {roc_auc:.4f}")
-        self.logger.log_info(f"False Positive Rate: {fpr}, True Positive Rate: {tpr}, ROC_AUC: {roc_auc:.4f}")
+        print(f"ROC_AUC: {roc_auc:.4f}")
+        self.logger.log_info(f"ROC_AUC: {roc_auc:.4f}")
+
         return True

@@ -13,6 +13,7 @@ import src.Validation
 import src.Log
 import src.Model
 
+from tqdm import tqdm
 from collections import OrderedDict
 from requests.auth import HTTPBasicAuth
 
@@ -55,8 +56,10 @@ server_mode = config["server"]["mode"]
 data_range = data_distribution["num-data-range"]
 
 # Clients
+epoch = config["learning"]["epoch"]
 batch_size = config["learning"]["batch-size"]
 lr = config["learning"]["learning-rate"]
+hyper_lr = config["learning"]["hyper-lr"]
 momentum = config["learning"]["momentum"]
 
 log_path = config["log_path"]
@@ -98,18 +101,23 @@ class Server:
         self.hnet = None
         if server_mode == "hyper":
             if not self.net and not self.hnet:
-                if model_name == "RNNModel":
+                if model_name == "CNN":
+                    self.net = src.Model.CNNModel(7, 16).to(device)
+                elif model_name == "RNN":
                     self.net = src.Model.RNNModel(7, 16).to(device)
-                    self.hnet = src.Model.RNNHypernetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
+                elif model_name == "Transformer":
+                    self.net = src.Model.TransformerModel(7, 16, 4, 6).to(device)
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
+
+                self.hnet = src.Model.Hypernetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
             if load_parameters:
-                filepath = f'{model_name}_hyper.pth'
+                filepath = f'{model_name}_hyper_{total_clients}.pth'
                 if os.path.exists(filepath):
                     state_dict = torch.load(filepath, weights_only=True)
                     self.hnet.load_state_dict(state_dict)
 
-            self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr=0.001)
+            self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr=hyper_lr)
 
         self.logger = src.Log.Logger(f"{log_path}/app.log")
         self.validation = src.Validation.Validation(model_name, data_name, self.logger)
@@ -207,9 +215,10 @@ class Server:
         if self.round_result:
             if server_mode == "fedavg":
                 self.avg_all_parameters()
-                self.all_model_parameters = []
             elif server_mode == "hyper":
+                src.Log.print_with_color(f"Start training hyper model!", "yellow")
                 self.train_hyper()
+            self.all_model_parameters = []
         # Server validation
         if validation and self.round_result:
             self.round_result = self.validation.test(self.final_state_dict, device)
@@ -221,7 +230,7 @@ class Server:
             if server_mode == "fedavg":
                 torch.save(self.final_state_dict, f'{model_name}.pth')
             elif server_mode == "hyper":
-                torch.save(self.hnet.state_dict(), f'{model_name}_hyper.pth')
+                torch.save(self.hnet.state_dict(), f'{model_name}_hyper_{total_clients}.pth')
             self.round -= 1
         self.round_result = True
 
@@ -268,6 +277,7 @@ class Server:
                             "data_name": data_name,
                             "parameters": state_dict,
                             "data_ranges": data_range,
+                            "epoch": epoch,
                             "batch_size": batch_size,
                             "lr": lr,
                             "momentum": momentum,
@@ -300,7 +310,7 @@ class Server:
         Consuming all client's weight from `self.all_model_parameters` and start training hyper model
         :return: Global weight on `self.final_state_dict`
         """
-        for node_id in self.selected_client:
+        for node_id in tqdm(self.selected_client):
             self.hnet.train()
             weights = self.hnet(torch.tensor([node_id], dtype=torch.long).to(device))
 
@@ -311,11 +321,7 @@ class Server:
             self.optimizer.zero_grad()
 
             inner_state = OrderedDict({k: tensor.data for k, tensor in weights.items()})
-            final_state = None
-            for w in self.all_model_parameters:
-                if str(w["client_id"]) == self.list_clients[node_id]:
-                    final_state = w["weight"]
-                    break
+            final_state = self.find_weight(node_id)
             final_state = {k: v.to(device) for k, v in final_state.items()}
             delta_theta = OrderedDict({k: inner_state[k] - final_state[k] for k in weights.keys()})
 
@@ -340,12 +346,20 @@ class Server:
             self.optimizer.step()
 
         # Update new clients' weight
+        src.Log.print_with_color(f"Update new clients' weight", "yellow")
         for i in range(len(self.all_model_parameters)):
             c = self.list_clients.index(str(self.all_model_parameters[i]["client_id"]))
+            print(f"Get client on index {c}")
             model_dict = self.hnet(torch.tensor([c], dtype=torch.long).to(device))
             self.all_model_parameters[i]["weight"] = model_dict
 
         self.avg_all_parameters()
+
+    def find_weight(self, node_id):
+        for w in self.all_model_parameters:
+            if str(w["client_id"]) == self.list_clients[node_id]:
+                return w["weight"]
+        src.Log.print_with_color(f"[Warning] Cannot find weight of node id {node_id}!", "yellow")
 
     def avg_all_parameters(self):
         """
@@ -360,7 +374,6 @@ class Server:
 
         self.final_state_dict = self.all_model_parameters[0]['weight']
         all_client_sizes = [item['size'] for item in self.all_model_parameters]
-        print(all_client_sizes)
 
         for key in self.final_state_dict.keys():
             if self.final_state_dict[key].dtype != torch.long:
@@ -369,6 +382,9 @@ class Server:
             else:
                 self.final_state_dict[key] = sum(self.all_model_parameters[i]['weight'][key] * all_client_sizes[i]
                                                  for i in range(num_models)) // sum(all_client_sizes)
+
+        if not self.final_state_dict:
+            src.Log.print_with_color(f"[Warning] Final state dict is None!", "yellow")
 
 
 def delete_old_queues():

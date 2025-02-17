@@ -131,9 +131,9 @@ class RNNModel(nn.Module):
         return output
 
 
-class RNNHypernetwork(nn.Module):
+class Hypernetwork(nn.Module):
     def __init__(self, target_model, n_nodes, embedding_dim, hidden_dim=100, spec_norm=False, n_hidden=1):
-        super(RNNHypernetwork, self).__init__()
+        super(Hypernetwork, self).__init__()
         self.target_model = target_model
         self.embeddings = nn.Embedding(num_embeddings=n_nodes, embedding_dim=embedding_dim)
 
@@ -270,4 +270,3 @@ class TransformerModel(nn.Module):
         output = torch.sigmoid(self.output(x))
 
         return output
-

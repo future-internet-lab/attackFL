@@ -59,29 +59,31 @@ else:
 credentials = pika.PlainCredentials(username, password)
 
 
-def train_on_device(model, lr, momentum, trainloader):
+def train_on_device(model, epoch, lr, momentum, trainloader):
+    model.to(device)
     criterion = torch.nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     model.train()
-    for vitals, labs, labels in tqdm(trainloader):
-        if vitals.size(0) == 1 or labs.size(0) == 1:
-            continue
-        vitals = vitals.to(device)
-        labs = labs.to(device)
-        labels = labels.to(device)
-        labels = labels.unsqueeze(1)
+    for _ in range(epoch):
+        for vitals, labs, labels in tqdm(trainloader):
+            if vitals.size(0) == 1 or labs.size(0) == 1:
+                continue
+            vitals = vitals.to(device)
+            labs = labs.to(device)
+            labels = labels.to(device)
+            labels = labels.unsqueeze(1)
 
-        optimizer.zero_grad()
-        output = model(vitals, labs)
-        loss = criterion(output, labels)
+            optimizer.zero_grad()
+            output = model(vitals, labs)
+            loss = criterion(output, labels)
 
-        if torch.isnan(loss).any():
-            src.Log.print_with_color("NaN detected in loss, stop training", "yellow")
-            return False
+            if torch.isnan(loss).any():
+                src.Log.print_with_color("NaN detected in loss, stop training", "yellow")
+                return False
 
-        loss.backward()
-        optimizer.step()
+            loss.backward()
+            optimizer.step()
 
     return True
 
