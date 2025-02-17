@@ -24,16 +24,6 @@ class ICUData(Dataset):
         return self.vitals[idx], self.labs[idx], self.labels[idx]
 
 
-def non_iid_rate(num_data, rate):
-    result = []
-    for _ in range(num_data):
-        if rate < random.random():
-            result.append(0)
-        else:
-            result.append(1)
-    return np.array(result)
-
-
 def compute_distance(state_dict1, state_dict2):
     """
     Compute distance between two state_dict.
@@ -57,6 +47,38 @@ def compute_distance(state_dict1, state_dict2):
     return total_distance
 
 
+def create_random_base_model(state_dict, perturbation=0.1):
+    base_model = copy.deepcopy(state_dict)
+    for param in base_model.keys():
+        if base_model[param].dtype != torch.long:
+            base_model[param] += torch.randn_like(base_model[param]) * perturbation
+
+    return base_model
+
+
+def check_min_max_distance(all_genuine_models, max_distance, malicious_model):
+    malicious_distance = 0.0
+
+    for genuine_model in all_genuine_models:
+        distance = compute_distance(malicious_model, genuine_model)
+        if distance > malicious_distance:
+            malicious_distance = distance
+
+    return malicious_distance < max_distance
+
+
+def check_min_sum_distance(all_genuine_models, max_distance, malicious_model):
+    malicious_distance = 0.0
+
+    for genuine_model in all_genuine_models:
+        malicious_distance += compute_distance(malicious_model, genuine_model) ** 2
+
+    return malicious_distance < max_distance
+
+
+### ATTACK SCHEMES
+
+
 def calculate_mean_and_std(state_dicts):
     mean_std_dict = {}
 
@@ -70,72 +92,73 @@ def calculate_mean_and_std(state_dicts):
 
     return mean_std_dict
 
-### ATTACK SCHEMES
 
-def create_random_base_model(state_dict, perturbation=0.1):
-    base_model = copy.deepcopy(state_dict)
-    for param in base_model.keys():
-        if base_model[param].dtype != torch.long:
-            base_model[param] += torch.randn_like(base_model[param]) * perturbation
-
-    return base_model
-
-
-def create_min_max_model(state_dict, all_genuine_models, step=0.001):
-    max_distance = 0.0
-
+def create_min_max_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
     if len(all_genuine_models) <= 1:
         return state_dict
 
+    malicious_model = None
+    mean_std_dict = calculate_mean_and_std(all_genuine_models)
+
+    max_distance = 0.0
     for i in range(len(all_genuine_models) - 1):
         for j in range(i + 1, len(all_genuine_models)):
             distance = compute_distance(all_genuine_models[i], all_genuine_models[j])
             if distance > max_distance:
                 max_distance = distance
 
-    distance_step = 0.0
-    malicious_distance = 0.0
-    malicious_model = None
-    while malicious_distance < max_distance:
-        distance_step += step
-        malicious_model = create_random_base_model(state_dict, distance_step)
-        # Calculate distance to all genuine models
-        for genuine_model in all_genuine_models:
-            distance = compute_distance(malicious_model, genuine_model)
-            if distance > malicious_distance:
-                malicious_distance = distance
+    step = gamma
+    gamma_succ = 0.0
 
-    print(distance_step)
+    while abs(gamma_succ - gamma) > tau:
+        malicious_model = all_genuine_models[0]
+        for key, stats in mean_std_dict.items():
+            # benign_mean + gamma * perturbation
+            malicious_model[key] = stats['mean'] + gamma * stats['std']
+
+        if check_min_max_distance(all_genuine_models, max_distance, malicious_model):
+            gamma_succ = gamma
+            gamma = gamma + step / 2
+        else:
+            gamma = gamma - step / 2
+        step = step / 2
+
     return malicious_model
 
 
-def create_min_sum_model(state_dict, all_genuine_models, step=0.001):
-    max_distance = 0.0
+def create_min_sum_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
+    if len(all_genuine_models) <= 1:
+        return state_dict
 
+    malicious_model = None
+    mean_std_dict = calculate_mean_and_std(all_genuine_models)
+
+    max_distance = 0.0
     for i in range(len(all_genuine_models)):
         sum_distance = 0.0
         for j in range(len(all_genuine_models)):
             if i == j:
                 continue
-            sum_distance += compute_distance(all_genuine_models[i], all_genuine_models[j])
+            sum_distance += compute_distance(all_genuine_models[i], all_genuine_models[j]) ** 2
 
         if sum_distance > max_distance:
             max_distance = sum_distance
 
-    distance_step = 0.0
-    malicious_distance = 0.0
-    malicious_model = None
-    while malicious_distance < max_distance:
-        distance_step += step
-        malicious_model = create_random_base_model(state_dict, distance_step)
+    step = gamma
+    gamma_succ = 0.0
 
-        sum_distance = 0.0
-        # Calculate distance to all genuine models
-        for genuine_model in all_genuine_models:
-            sum_distance += compute_distance(malicious_model, genuine_model)
+    while abs(gamma_succ - gamma) > tau:
+        malicious_model = all_genuine_models[0]
+        for key, stats in mean_std_dict.items():
+            # benign_mean + gamma * perturbation
+            malicious_model[key] = stats['mean'] + gamma * stats['std']
 
-        if sum_distance > malicious_distance:
-            malicious_distance = sum_distance
+        if check_min_sum_distance(all_genuine_models, max_distance, malicious_model):
+            gamma_succ = gamma
+            gamma = gamma + step / 2
+        else:
+            gamma = gamma - step / 2
+        step = step / 2
 
     return malicious_model
 
@@ -148,4 +171,3 @@ def create_LIE_state_dict(list_dict, scaling_factor=0.74):
         malicious_state_dict[key] = stats['mean'] + scaling_factor * stats['std']
 
     return malicious_state_dict
-
