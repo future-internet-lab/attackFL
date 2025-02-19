@@ -69,20 +69,20 @@ class RpcClient:
             model_name = self.response["model_name"]
             self.training_round += 1
             if self.model is None:
-                if model_name == "CNN":
-                    self.model = src.Model.CNNModel(7, 16)
-                elif model_name == "RNN":
-                    self.model = src.Model.RNNModel(7, 16)
-                elif model_name == "Transformer":
-                    self.model = src.Model.TransformerModel(7, 16, 4, 6)
+                if hasattr(src.Model, model_name):
+                    self.model = getattr(src.Model, model_name)()
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
 
             # Read parameters and load to model
             if state_dict:
-                # Instead of loading weights directly, update net's parameters using the generated weights
-                for name, param in self.model.named_parameters():
-                    param.data = state_dict[name]
+                try:
+                    self.model.load_state_dict(state_dict)
+                except Exception as e:
+                    src.Log.print_with_color(f"[Warning] Cannot load state dict on client. {e}", "yellow")
+                    # Instead of loading weights directly, update net's parameters using the generated weights
+                    for name, param in self.model.named_parameters():
+                        param.data = state_dict[name]
 
             data_ranges = self.response["data_ranges"]
             genuine_models = self.response["genuine_models"]

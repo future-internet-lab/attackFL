@@ -101,16 +101,12 @@ class Server:
         self.hnet = None
         if server_mode == "hyper":
             if not self.net and not self.hnet:
-                if model_name == "CNN":
-                    self.net = src.Model.CNNModel(7, 16).to(device)
-                elif model_name == "RNN":
-                    self.net = src.Model.RNNModel(7, 16).to(device)
-                elif model_name == "Transformer":
-                    self.net = src.Model.TransformerModel(7, 16, 4, 6).to(device)
+                if hasattr(src.Model, model_name):
+                    self.net = getattr(src.Model, model_name)().to(device)
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
 
-                self.hnet = src.Model.Hypernetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
+                self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
             if load_parameters:
                 filepath = f'{model_name}_hyper_{total_clients}.pth'
                 if os.path.exists(filepath):
@@ -368,6 +364,7 @@ class Server:
         """
         # Average all client parameters
         num_models = len(self.all_model_parameters)
+        src.Log.print_with_color(f"Number of models' parameters = {num_models}", "yellow")
 
         if num_models == 0:
             return

@@ -3,7 +3,7 @@ server:
   num-round: 50
   clients: 30
   mode: hyper
-  model: Transformer
+  model: CNNModel
   data-name: ICU
   parameters:
     load: True

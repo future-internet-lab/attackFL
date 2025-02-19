@@ -85,12 +85,49 @@ def calculate_mean_and_std(state_dicts):
     for key in state_dicts[0].keys():
         if state_dicts[0][key].dtype != torch.long:
             params = torch.stack([state_dict[key] for state_dict in state_dicts])
+            mean_val = torch.mean(params, dim=0)
+            std_val = torch.std(params, dim=0)
+            sign_val = torch.sign(mean_val)
             mean_std_dict[key] = {
-                'mean': torch.mean(params, dim=0),
-                'std': torch.std(params, dim=0)
+                'mean': mean_val,
+                'std': std_val,
+                'sign': sign_val
             }
 
     return mean_std_dict
+
+
+def create_opt_fang_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
+    if len(all_genuine_models) <= 1:
+        return state_dict
+
+    malicious_model = None
+    mean_std_dict = calculate_mean_and_std(all_genuine_models)
+
+    max_distance = 0.0
+    for i in range(len(all_genuine_models) - 1):
+        for j in range(i + 1, len(all_genuine_models)):
+            distance = compute_distance(all_genuine_models[i], all_genuine_models[j])
+            if distance > max_distance:
+                max_distance = distance
+
+    step = gamma
+    gamma_succ = 0.0
+
+    while abs(gamma_succ - gamma) > tau:
+        malicious_model = all_genuine_models[0]
+        for key, stats in mean_std_dict.items():
+            # benign_mean + gamma * perturbation
+            malicious_model[key] = stats['mean'] - gamma * stats['sign']
+
+        if check_min_max_distance(all_genuine_models, max_distance, malicious_model):
+            gamma_succ = gamma
+            gamma = gamma + step / 2
+        else:
+            gamma = gamma - step / 2
+        step = step / 2
+
+    return malicious_model
 
 
 def create_min_max_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
@@ -114,7 +151,7 @@ def create_min_max_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
         malicious_model = all_genuine_models[0]
         for key, stats in mean_std_dict.items():
             # benign_mean + gamma * perturbation
-            malicious_model[key] = stats['mean'] + gamma * stats['std']
+            malicious_model[key] = stats['mean'] - gamma * stats['std']
 
         if check_min_max_distance(all_genuine_models, max_distance, malicious_model):
             gamma_succ = gamma
@@ -151,7 +188,7 @@ def create_min_sum_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
         malicious_model = all_genuine_models[0]
         for key, stats in mean_std_dict.items():
             # benign_mean + gamma * perturbation
-            malicious_model[key] = stats['mean'] + gamma * stats['std']
+            malicious_model[key] = stats['mean'] - gamma * stats['std']
 
         if check_min_sum_distance(all_genuine_models, max_distance, malicious_model):
             gamma_succ = gamma

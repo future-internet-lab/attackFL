@@ -19,12 +19,8 @@ class Validation:
         self.logger = logger
         self.model = None
 
-        if model_name == "CNN":
-            self.model = src.Model.CNNModel(7, 16)
-        elif model_name == "RNN":
-            self.model = src.Model.RNNModel(7, 16)
-        elif model_name == "Transformer":
-            self.model = src.Model.TransformerModel(7, 16, 4, 6)
+        if hasattr(src.Model, model_name):
+            self.model = getattr(src.Model, model_name)()
         else:
             raise ValueError(f"Model name '{model_name}' is not valid.")
 
@@ -40,8 +36,12 @@ class Validation:
         self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=100, shuffle=False)
 
     def test(self, final_state_dict, device):
-        for name, param in self.model.named_parameters():
-            param.data = final_state_dict[name]
+        try:
+            self.model.load_state_dict(final_state_dict)
+        except Exception as e:
+            src.Log.print_with_color(f"[Warning] Cannot load state dict for testing. {e}", "yellow")
+            for name, param in self.model.named_parameters():
+                param.data = final_state_dict[name]
         self.model.to(device)
         # evaluation mode
         self.model.eval()
