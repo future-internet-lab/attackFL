@@ -49,6 +49,7 @@ password = config["rabbit"]["password"]
 num_round = config["server"]["num-round"]
 load_parameters = config["server"]["parameters"]["load"]
 validation = config["server"]["validation"]
+genuine_rate = config["server"]["genuine-rate"]
 random_seed = config["server"]["random-seed"]
 
 data_distribution = config["server"]["data-distribution"]
@@ -106,12 +107,23 @@ class Server:
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
 
-                self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
-            if load_parameters:
-                filepath = f'{model_name}_hyper_{total_clients}.pth'
-                if os.path.exists(filepath):
-                    state_dict = torch.load(filepath, weights_only=True)
-                    self.hnet.load_state_dict(state_dict)
+                if load_parameters:
+                    filepath_hyper = f'{model_name}_hyper_{total_clients}.pth'
+                    filepath = f'{model_name}.pth'
+                    if os.path.exists(filepath_hyper):
+                        src.Log.print_with_color(f"Load state dict from hyper model: {filepath_hyper}", "yellow")
+                        state_dict = torch.load(filepath_hyper, weights_only=True)
+                        self.load_new_hyper()
+                        self.hnet.load_state_dict(state_dict)
+                    elif os.path.exists(filepath):
+                        src.Log.print_with_color(f"Load state dict from original model: {filepath}", "yellow")
+                        state_dict = torch.load(filepath, weights_only=True)
+                        self.net.load_state_dict(state_dict)
+                        self.load_new_hyper()
+                    else:
+                        self.load_new_hyper()
+                else:
+                    self.load_new_hyper()
 
             self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr=hyper_lr)
 
@@ -265,7 +277,9 @@ class Server:
 
                 genuine_models = None
                 if client_id in self.list_attack_clients:
-                    genuine_models = self.all_genuine_parameters
+                    if len(self.all_genuine_parameters) > 0:
+                        genuine_models = random.sample(self.all_genuine_parameters,
+                                                       max(int(genuine_rate * len(self.all_genuine_parameters)), 1))
 
                 response = {"action": "START",
                             "message": "Server accept the connection!",
@@ -317,7 +331,7 @@ class Server:
             self.optimizer.zero_grad()
 
             inner_state = OrderedDict({k: tensor.data for k, tensor in weights.items()})
-            final_state = self.find_weight(node_id)
+            final_state = self.find_weight(node_id)         # get client's weight
             final_state = {k: v.to(device) for k, v in final_state.items()}
             delta_theta = OrderedDict({k: inner_state[k] - final_state[k] for k in weights.keys()})
 
@@ -336,9 +350,10 @@ class Server:
             # Update the hypernetwork parameters
             for p, g in zip(self.hnet.parameters(), hnet_grads):
                 # Check if gradient is not None
-                if g is not None:
-                    p.grad = g
+                # if g is not None:
+                p.grad = g
 
+            # torch.nn.utils.clip_grad_norm_(self.hnet.parameters(), 50)
             self.optimizer.step()
 
         # Update new clients' weight
@@ -383,6 +398,8 @@ class Server:
         if not self.final_state_dict:
             src.Log.print_with_color(f"[Warning] Final state dict is None!", "yellow")
 
+    def load_new_hyper(self):
+        self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
 
 def delete_old_queues():
     url = f'http://{address}:15672/api/queues'

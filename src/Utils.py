@@ -1,7 +1,4 @@
-import numpy as np
-import random
 import copy
-
 import torch
 
 from torch.utils.data import Dataset
@@ -24,25 +21,24 @@ class ICUData(Dataset):
         return self.vitals[idx], self.labs[idx], self.labels[idx]
 
 
-def compute_distance(state_dict1, state_dict2):
+def compute_distance(state_dict1, state_dict2, p=2):
     """
-    Compute distance between two state_dict.
+    Tính khoảng cách giữa hai state_dict của PyTorch bằng norm Lp.
 
     Args:
-        state_dict1 (dict): first state_dict.
-        state_dict2 (dict): second state_dict.
+        state_dict1 (dict): state_dict đầu tiên.
+        state_dict2 (dict): state_dict thứ hai.
+        p (int): Bậc của norm (mặc định là L2 norm).
 
     Returns:
-        float: Total distance L2 between two weights.
+        float: Khoảng cách giữa hai state_dict.
     """
     total_distance = 0.0
 
     for key in state_dict1.keys():
-        param1 = state_dict1[key].float()
-        param2 = state_dict2[key].float()
-
-        distance = torch.norm(param1 - param2)
-        total_distance += distance.item()
+        if key in state_dict2:
+            diff = state_dict1[key] - state_dict2[key]
+            total_distance += torch.linalg.norm(diff, ord=p).item()
 
     return total_distance
 
@@ -97,7 +93,7 @@ def calculate_mean_and_std(state_dicts):
     return mean_std_dict
 
 
-def create_opt_fang_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
+def create_opt_fang_model(state_dict, all_genuine_models, gamma=50.0, tau=1.0):
     if len(all_genuine_models) <= 1:
         return state_dict
 
@@ -115,6 +111,7 @@ def create_opt_fang_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
     gamma_succ = 0.0
 
     while abs(gamma_succ - gamma) > tau:
+        print(f"Gamma is {gamma}")
         malicious_model = all_genuine_models[0]
         for key, stats in mean_std_dict.items():
             # benign_mean + gamma * perturbation
@@ -130,7 +127,7 @@ def create_opt_fang_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
     return malicious_model
 
 
-def create_min_max_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
+def create_min_max_model(state_dict, all_genuine_models, gamma=50.0, tau=1.0):
     if len(all_genuine_models) <= 1:
         return state_dict
 
@@ -148,6 +145,7 @@ def create_min_max_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
     gamma_succ = 0.0
 
     while abs(gamma_succ - gamma) > tau:
+        print(f"Gamma is {gamma}")
         malicious_model = all_genuine_models[0]
         for key, stats in mean_std_dict.items():
             # benign_mean + gamma * perturbation
@@ -163,7 +161,7 @@ def create_min_max_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
     return malicious_model
 
 
-def create_min_sum_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
+def create_min_sum_model(state_dict, all_genuine_models, gamma=50.0, tau=1.0):
     if len(all_genuine_models) <= 1:
         return state_dict
 
@@ -185,6 +183,7 @@ def create_min_sum_model(state_dict, all_genuine_models, gamma=1.0, tau=0.01):
     gamma_succ = 0.0
 
     while abs(gamma_succ - gamma) > tau:
+        print(f"Gamma is {gamma}")
         malicious_model = all_genuine_models[0]
         for key, stats in mean_std_dict.items():
             # benign_mean + gamma * perturbation

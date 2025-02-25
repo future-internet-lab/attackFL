@@ -1,9 +1,9 @@
 name: Federated Learning poisoning attack testbed
 server:
   num-round: 50
-  clients: 30
+  clients: 1
   mode: hyper
-  model: CNNModel
+  model: TransformerModel
   data-name: ICU
   parameters:
     load: True
@@ -12,6 +12,7 @@ server:
     num-data-range:
       - 100
       - 100
+  genuine-rate: 0.5
   random-seed: 1
 
 rabbit:

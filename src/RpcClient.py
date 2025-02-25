@@ -116,15 +116,19 @@ class RpcClient:
             base_model = src.Utils.create_random_base_model(self.model.state_dict(), perturbation=self.attack_args[0])
             return True, base_model
         elif self.attack_mode == "Min-Max":
-            attack_model = src.Utils.create_min_max_model(self.model.to('cpu').state_dict(), genuine_models,
-                                                          step=self.attack_args[0])
+            attack_model = src.Utils.create_min_max_model(self.model.to('cpu').state_dict(), genuine_models)
             if attack_model:
                 return True, attack_model
             else:
                 return False, None
         elif self.attack_mode == "Min-Sum":
-            attack_model = src.Utils.create_min_sum_model(self.model.to('cpu').state_dict(), genuine_models,
-                                                          step=self.attack_args[0])
+            attack_model = src.Utils.create_min_sum_model(self.model.to('cpu').state_dict(), genuine_models)
+            if attack_model:
+                return True, attack_model
+            else:
+                return False, None
+        elif self.attack_mode == "Opt-Fang":
+            attack_model = src.Utils.create_opt_fang_model(self.model.to('cpu').state_dict(), genuine_models)
             if attack_model:
                 return True, attack_model
             else:
