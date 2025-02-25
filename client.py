@@ -15,8 +15,8 @@ parser = argparse.ArgumentParser(description="Split learning framework")
 parser.add_argument('--device', type=str, required=False, help='Device of client')
 parser.add_argument('--attack', type=bool, required=False,
                     default=False, help='Set to True to enable attack mode, False otherwise.')
-parser.add_argument('--attack_mode', type=str, choices=['Random', 'Min-Max', 'Min-Sum', 'LIE'],
-                    help="Mode of operation when attack is enabled (e.g., Random or Min-Max, Min-Sum ...).")
+parser.add_argument('--attack_mode', type=str, choices=['Random', 'Min-Max', 'Min-Sum', 'Opt-Fang', 'LIE'],
+                    help="Mode of operation when the attack is enabled (e.g., Random or Min-Max, Min-Sum ...).")
 parser.add_argument('--attack_round', type=int,
                     help="Client attack at round.")
 parser.add_argument('--attack_args', type=float, nargs='+', required=False,
@@ -59,25 +59,31 @@ else:
 credentials = pika.PlainCredentials(username, password)
 
 
-def train_on_device(model, lr, momentum, trainloader, criterion):
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+def train_on_device(model, epoch, lr, momentum, trainloader):
+    model.to(device)
+    criterion = torch.nn.BCELoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
 
     model.train()
-    for (training_data, label) in tqdm(trainloader):
-        if training_data.size(0) == 1:
-            continue
-        training_data = training_data.to(device)
-        label = label.to(device)
-        optimizer.zero_grad()
-        output = model(training_data)
-        loss = criterion(output, label)
+    for _ in range(epoch):
+        for vitals, labs, labels in tqdm(trainloader):
+            if vitals.size(0) == 1 or labs.size(0) == 1:
+                continue
+            vitals = vitals.to(device)
+            labs = labs.to(device)
+            labels = labels.to(device)
+            labels = labels.unsqueeze(1)
 
-        if torch.isnan(loss).any():
-            src.Log.print_with_color("NaN detected in loss, stop training", "yellow")
-            return False
+            optimizer.zero_grad()
+            output = model(vitals, labs)
+            loss = criterion(output, labels)
 
-        loss.backward()
-        optimizer.step()
+            if torch.isnan(loss).any():
+                src.Log.print_with_color("NaN detected in loss, stop training", "yellow")
+                return False
+
+            loss.backward()
+            optimizer.step()
 
     return True
 

@@ -1,11 +1,10 @@
 import torch
-import torchvision
-import torchvision.transforms as transforms
-import torch.nn.functional as F
 import numpy as np
-import math
+import gzip
+import pickle
 
 from torch.utils.data import DataLoader
+from sklearn.metrics import roc_curve, auc
 
 import src.Model
 import src.Utils
@@ -16,59 +15,69 @@ from tqdm import tqdm
 
 class Validation:
     def __init__(self, model_name, data_name, logger):
-        self.model_name = model_name
         self.data_name = data_name
         self.logger = logger
+        self.model = None
 
-        klass = getattr(src.Model, self.model_name)
-        if klass is None:
-            raise ValueError(f"Class '{model_name}' does not exist.")
-        self.model = klass()
+        if hasattr(src.Model, model_name):
+            self.model = getattr(src.Model, model_name)()
+        else:
+            raise ValueError(f"Model name '{model_name}' is not valid.")
 
         self.test_loader = None
+        if self.data_name and not self.test_loader:
+            # Load test_dataset
+            if self.data_name == "ICU":
+                with gzip.open("test_dataset.pkl.gz", "rb") as f:
+                    test_dataset = pickle.load(f)
+            else:
+                raise ValueError(f"Data name '{data_name}' is not valid.")
 
-        test_set = None
-        if self.data_name == "MNIST":
-            transform_test = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.5,), (0.5,))
-            ])
-            test_set = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
-        elif self.data_name == "CIFAR10":
-            transform_test = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-            ])
-            test_set = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+        self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=100, shuffle=False)
 
-        self.test_loader = torch.utils.data.DataLoader(test_set, batch_size=100, shuffle=False, num_workers=2)
-
-    def test(self, avg_state_dict):
-        self.model.load_state_dict(avg_state_dict)
+    def test(self, final_state_dict, device):
+        try:
+            self.model.load_state_dict(final_state_dict)
+        except Exception as e:
+            src.Log.print_with_color(f"[Warning] Cannot load state dict for testing. {e}", "yellow")
+            for name, param in self.model.named_parameters():
+                param.data = final_state_dict[name]
+        self.model.to(device)
         # evaluation mode
         self.model.eval()
-        if self.data_name == "MNIST" or self.data_name == "CIFAR10":
-            return self.test_image()
+        if self.data_name == "ICU":
+            return self.test_icu(device)
         else:
             raise ValueError(f"Not found test function for data name {self.data_name}")
 
-    def test_image(self):
-        test_loss = 0
-        correct = 0
-        for data, target in tqdm(self.test_loader):
-            output = self.model(data)
-            test_loss += F.nll_loss(output, target, reduction='sum').item()
-            pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability
-            correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
+    def test_icu(self, device):
+        # List to store true labels and predicted scores
+        all_labels = []
+        all_outputs = []
 
-        test_loss /= len(self.test_loader.dataset)
-        accuracy = 100.0 * correct / len(self.test_loader.dataset)
-        print('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
-            test_loss, correct, len(self.test_loader.dataset), accuracy))
-        self.logger.log_info('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
-            test_loss, correct, len(self.test_loader.dataset), accuracy))
+        with torch.no_grad():
+            for vitals, labs, labels in tqdm(self.test_loader):
+                vitals = vitals.to(device)
+                labs = labs.to(device)
+                labels = labels.to(device).unsqueeze(1)
 
-        if np.isnan(test_loss) or math.isnan(test_loss) or abs(test_loss) > 10e5:
-            return False
+                outputs = self.model(vitals, labs)
+                if torch.isnan(outputs).any():
+                    src.Log.print_with_color("NaN detected in output, training false", "yellow")
+                    return False
+
+                all_labels.append(labels.cpu().numpy())
+                all_outputs.append(outputs.cpu().numpy())
+
+        # Concatenate all labels and outputs
+        all_labels = np.concatenate(all_labels)
+        all_outputs = np.concatenate(all_outputs)
+
+        # Compute ROC-AUC
+        fpr, tpr, thresholds = roc_curve(all_labels, all_outputs)
+        roc_auc = auc(fpr, tpr)
+
+        print(f"ROC_AUC: {roc_auc:.4f}")
+        self.logger.log_info(f"ROC_AUC: {roc_auc:.4f}")
 
         return True

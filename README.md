@@ -1,13 +1,5 @@
 # Federated Learning Poisoning Attack
 
-## Federated Learning and Poisoning Attack
-
-...
-
-## Deployment Model
-
-...
-
 ## Required Packages
 ```
 pika
@@ -52,25 +44,22 @@ docker-compose up -d
 Application configuration is in the `config.yaml` file:
 
 ```yaml
-name: Coordinated Federated Learning
+name: Federated Learning poisoning attack testbed
 server:   # server configuration
   num-round: 2  # number of training rounds
   clients: 3    # number of FL clients
-  model: ResNet50     # class name of DNN model
-  data-name: CIFAR10  # training data: MNIST, CIFAR10
+  mode: hyper   # server mode: `fedavg` or `hyper`
+  model: RNNModel     # class name of DNN model
+  data-name: ICU      # training data
   parameters:
-    load: False     # allow to load parameters file
-    save: False     # allow to save parameters file
-                    # if turn on, server will be averaging all parameters
+    load: True     # allow to load parameters file
   validation: True  # allow to validate on server-side
   ### algorithm
-  data-mode: even         # data distribution `even` or `uneven`
   data-distribution:      # data distribution config
     num-data-range:       # minimum and maximum number of label's data
       - 0
       - 500
-    non-iid-rate: 0.5     # non-IID rate, range (0, 1]
-    refresh-each-round: True  # if set True, non-IID on label will be reset on each round
+  genuine-rate: 0.5       # genuine clients rate and send to malicious clients 
   random-seed: 1
 
 rabbit:   # RabbitMQ connection configuration
@@ -81,8 +70,10 @@ rabbit:   # RabbitMQ connection configuration
 log_path: .   # logging directory
 
 learning:
+  epoch: 5          # client local epochs
   learning-rate: 0.01
-  momentum: 1
+  hyper-lr: 0.0005      # learning rate of hyper model
+  momentum: 0.5
   batch-size: 256
 ```
 
@@ -90,18 +81,11 @@ This configuration is use for server and all clients.
 
 ### List of DNN model
 
-#### For MNIST
+#### For ICU
 ```
-SimpleCNN
-LeNet_MNIST
-```
-
-#### For CIFAR10
-```
-LeNet_CIFAR10
-MobileNetV2
-ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
-VGG16, VGG19
+CNNModel
+RNNModel
+TransformerModel
 ```
 
 ## How to Run
@@ -143,13 +127,19 @@ python client.py --attack True --attack_mode LIE --attack_round 1 --attack_args 
 #### Min-Max
 
 ```commandline
-python client.py --attack True --attack_mode Min-Max --attack_round 2 --attack_args 0.00001
+python client.py --attack True --attack_mode Min-Max --attack_round 2
 ```
 
 #### Min-Sum
 
 ```commandline
-python client.py --attack True --attack_mode Min-Sum --attack_round 2 --attack_args 0.00001
+python client.py --attack True --attack_mode Min-Sum --attack_round 2
+```
+
+#### Opt-Fang
+
+```commandline
+python client.py --attack True --attack_mode Opt-Fang --attack_round 2
 ```
 
 ## Parameter Files
