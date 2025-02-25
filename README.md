@@ -88,6 +88,11 @@ RNNModel
 TransformerModel
 ```
 
+#### For CIFAR10
+```
+CNNTarget
+```
+
 ## How to Run
 
 Alter your configuration, you need to run the server to listen and control the request from clients.

@@ -399,7 +399,13 @@ class Server:
             src.Log.print_with_color(f"[Warning] Final state dict is None!", "yellow")
 
     def load_new_hyper(self):
-        self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
+        """
+        Load hyper model to `self.hnet`
+        """
+        if model_name == "CNNTarget":
+            self.hnet = src.Model.CNNHyper(n_nodes=self.total_clients, embedding_dim=3).to(device)
+        else:
+            self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
 
 def delete_old_queues():
     url = f'http://{address}:15672/api/queues'
