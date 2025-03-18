@@ -3,6 +3,7 @@ server:
   num-round: 50
   clients: 1
   mode: hyper
+  defense-mode: ShieldFL
   model: TransformerModel
   data-name: ICU
   parameters:

@@ -38,6 +38,7 @@ def compute_distance(state_dict1, state_dict2, p=2):
     for key in state_dict1.keys():
         if key in state_dict2:
             diff = state_dict1[key] - state_dict2[key]
+            diff = diff.reshape(-1)  # Chuyển tensor về dạng 1D
             total_distance += torch.linalg.norm(diff, ord=p).item()
 
     return total_distance
