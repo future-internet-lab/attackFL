@@ -12,6 +12,7 @@ import random
 import src.Validation
 import src.Log
 import src.Model
+import src.Detection
 
 from tqdm import tqdm
 from collections import OrderedDict
@@ -54,6 +55,7 @@ random_seed = config["server"]["random-seed"]
 
 data_distribution = config["server"]["data-distribution"]
 server_mode = config["server"]["mode"]
+defense_mode = config["server"]["defense-mode"]
 data_range = data_distribution["num-data-range"]
 
 # Clients
@@ -201,7 +203,7 @@ class Server:
                 model_state_dict = message["parameters"]
                 client_size = message["size"]
                 self.all_model_parameters.append({'client_id': client_id, 'weight': model_state_dict,
-                                                  'size': client_size})
+                                                  'size': client_size, 'attack': False})
                 if str(client_id) not in self.list_attack_clients:
                     self.all_genuine_parameters.append(model_state_dict)
 
@@ -218,8 +220,15 @@ class Server:
         :return:
         """
         self.updated_clients = 0
-        src.Log.print_with_color("Collected all parameters.", "yellow")
+        src.Log.print_with_color("Collected all parameters. Start processing consumer", "yellow")
         # TODO: detect model poisoning with self.all_model_parameters at here
+        malicious_client = []
+        if defense_mode == "ShieldFL":
+            malicious_client = src.Detection.ShieldFL(self.all_model_parameters)
+
+        if len(malicious_client) > 0:
+            src.Log.print_with_color(f"Detect malicious model at client: {malicious_client}", "red")
+
         if self.round_result:
             if server_mode == "fedavg":
                 self.avg_all_parameters()
@@ -229,7 +238,10 @@ class Server:
             self.all_model_parameters = []
         # Server validation
         if validation and self.round_result:
-            self.round_result = self.validation.test(self.final_state_dict, device)
+            if server_mode == "fedavg":
+                self.round_result = self.validation.test(self.final_state_dict, device)
+            elif server_mode == "hyper":
+                self.round_result = self.validation.test_hyper(self.hnet, len(self.all_model_parameters), device)
 
         if not self.round_result:
             src.Log.print_with_color(f"Training failed!", "yellow")
@@ -364,7 +376,7 @@ class Server:
             model_dict = self.hnet(torch.tensor([c], dtype=torch.long).to(device))
             self.all_model_parameters[i]["weight"] = model_dict
 
-        self.avg_all_parameters()
+        # self.avg_all_parameters()
 
     def find_weight(self, node_id):
         for w in self.all_model_parameters:
@@ -399,7 +411,13 @@ class Server:
             src.Log.print_with_color(f"[Warning] Final state dict is None!", "yellow")
 
     def load_new_hyper(self):
-        self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
+        """
+        Load hyper model to `self.hnet`
+        """
+        if model_name == "CNNTarget":
+            self.hnet = src.Model.CNNHyper(n_nodes=self.total_clients, embedding_dim=3).to(device)
+        else:
+            self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
 
 def delete_old_queues():
     url = f'http://{address}:15672/api/queues'
