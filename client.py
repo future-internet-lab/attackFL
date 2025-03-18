@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 import torch
 import torch.optim as optim
+import torch.nn as nn
 
 import src.Log
 from src.RpcClient import RpcClient
@@ -59,7 +60,41 @@ else:
 credentials = pika.PlainCredentials(username, password)
 
 
-def train_on_device(model, epoch, lr, momentum, trainloader):
+def train_on_device(model, data_name, epoch, lr, momentum, trainloader):
+    if data_name == "CIFAR10":
+        return train_image(model, epoch, lr, momentum, trainloader)
+    elif data_name == "ICU":
+        return train_icu(model, epoch, lr, momentum, trainloader)
+    else:
+        raise ValueError(f"Data name '{data_name}' is not valid.")
+
+
+def train_image(model, epoch, lr, momentum, trainloader):
+    model.to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    model.train()
+    for _ in range(epoch):
+        for (training_data, label) in tqdm(trainloader):
+            if training_data.size(0) == 1:
+                continue
+            training_data = training_data.to(device)
+            label = label.to(device)
+            optimizer.zero_grad()
+            output = model(training_data)
+            loss = criterion(output, label)
+
+            if torch.isnan(loss).any():
+                src.Log.print_with_color("NaN detected in loss, stop training", "yellow")
+                return False
+
+            loss.backward()
+            optimizer.step()
+
+    return True
+
+def train_icu(model, epoch, lr, momentum, trainloader):
     model.to(device)
     criterion = torch.nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
