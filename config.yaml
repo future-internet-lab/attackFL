@@ -1,8 +1,8 @@
 name: Federated Learning poisoning attack testbed
 server:
   num-round: 50
-  clients: 5
-  mode: hyper
+  clients: 1
+  mode: FLTrust # hyper
   hyper-detection:
     enable: False
     cosine-search: 10
@@ -23,13 +23,13 @@ server:
 
 rabbit:
   address: 127.0.0.1
-  username: admin
-  password: admin
+  username: thuong 
+  password: thuong
 
 log_path: .
 
 learning:
-  epoch: 5
+  epoch: 1
   learning-rate: 0.0005
   hyper-lr: 0.0005
   momentum: 0.5

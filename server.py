@@ -9,6 +9,7 @@ import torch
 import requests
 import random
 import copy
+import gzip
 
 from tqdm import tqdm
 from collections import deque, OrderedDict
@@ -22,6 +23,8 @@ from src.Utils import calculate_md, train_gmm_model, verify_gradient
 from src.Utils import krum, get_weight_vector
 from src.Utils import byzantine_tolerance_aggregation, median_aggregation
 from src.Utils import cosine, DBSCAN_phase2
+
+from client import*
 
 
 parser = argparse.ArgumentParser(description="Split learning framework with controller.")
@@ -114,6 +117,10 @@ class Server:
         # Initial hyper training model
         self.net = None
         self.hnet = None
+        
+        # Training FLTrust
+        self.model = None
+        self.root_loader = None
 
         # detection algorithms
         self.previous_hyper = None
@@ -149,6 +156,14 @@ class Server:
 
             self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr=hyper_lr)
 
+        if server_mode == "FLTrust":
+            if not self.model:
+                if hasattr(src.Model, model_name):
+                    self.model = getattr(src.Model, model_name)().to(device)
+                else:
+                    raise ValueError(f"Model name '{model_name}' is not valid.")
+        
+        
         self.logger = src.Log.Logger(f"{log_path}/app.log")
         self.validation = src.Validation.Validation(model_name, data_name, self.logger)
 
@@ -220,12 +235,29 @@ class Server:
                 self.round_result = False
 
             if self.round_result:
-                model_state_dict = message["parameters"]
-                client_size = message["size"]
-                self.all_model_parameters.append({'client_id': client_id, 'weight': model_state_dict,
-                                                  'size': client_size})
-                if str(client_id) not in self.list_attack_clients:
-                    self.all_genuine_parameters.append(model_state_dict)
+                if server_mode == "FLTrust":
+                    model_state_dict = message["parameters"]
+                    client_size = message["size"]
+                    if self.global_model_state_dict is None:
+                        self.global_model_state_dict = copy.deepcopy(self.model.state_dict())
+                    # Tính update: wR - w0
+                    delta = {k: model_state_dict[k].to(device) - self.global_model_state_dict[k].to(device) for k in model_state_dict}
+
+                    self.all_model_parameters.append({
+                        'client_id': client_id,
+                        'weight': delta,  # lưu gradient update
+                        'size': client_size
+                    })
+                    if str(client_id) not in self.list_attack_clients:
+                        self.all_genuine_parameters.append(model_state_dict)
+             
+                else:        
+                    model_state_dict = message["parameters"]
+                    client_size = message["size"]
+                    self.all_model_parameters.append({'client_id': client_id, 'weight': model_state_dict,
+                                                    'size': client_size})
+                    if str(client_id) not in self.list_attack_clients:
+                        self.all_genuine_parameters.append(model_state_dict)
 
             # If consumed all client's parameters
             if self.updated_clients == len(self.selected_client):
@@ -246,6 +278,14 @@ class Server:
         if self.round_result:
             if server_mode == "fedavg":
                 self.avg_all_parameters()
+            if server_mode == "FLTrust":
+                
+                # with gzip.open("test_dataset.pkl.gz", "rb") as f:
+                #     root_dataset = pickle.load(f)
+                    
+                root_dataset = torch.load('root_FLTrust.pt')
+                self.root_loader = torch.utils.data.DataLoader(root_dataset , batch_size=100, shuffle=False)
+                self.train_FLTrust()
             elif server_mode == "hyper":
                 src.Log.print_with_color(f"Start training hyper model!", "yellow")
                 if hyper_detection_enable:
@@ -369,6 +409,7 @@ class Server:
         :return:
         """
         # Send message to clients when consumed all clients
+        self.global_model_state_dict = self.final_state_dict
         if start:
             # Read parameters file
             state_dict = None
@@ -376,7 +417,7 @@ class Server:
                 if load_parameters:
                     filepath = f'{model_name}.pth'
                     if os.path.exists(filepath):
-                        state_dict = torch.load(filepath, weights_only=True)
+                        state_dict = torch.load(filepath)
 
             for i in self.selected_client:
                 if server_mode == "hyper":
@@ -475,6 +516,69 @@ class Server:
             self.all_model_parameters[i]["weight"] = model_dict
 
         # self.avg_all_parameters()
+    #Train FLTrust 
+    @staticmethod
+    def cosine_similarity(u, v):
+    # Nếu là dict (state_dict), convert sang list tensor
+        if isinstance(u, dict):
+            u = [p.data.clone() for p in u.values()]
+        if isinstance(v, dict):
+            v = [p.data.clone() for p in v.values()]
+
+        u_flat = torch.cat([p.flatten() for p in u])
+        v_flat = torch.cat([p.flatten() for p in v])
+
+        return torch.nn.functional.cosine_similarity(u_flat, v_flat, dim=0).item()
+
+    @staticmethod
+    def normalize_update(update_dict, scale):
+        return {k: v * scale for k, v in update_dict.items()}
+
+    @staticmethod
+    def subtract_state_dict(wR, w0):
+        return {k: wR[k] - w0[k] for k in wR}
+
+    def train_FLTrust(self):
+        # g_0 = self.model.state_dict()
+        if self.final_state_dict:
+            g_0 = self.final_state_dict
+            self.model.load_state_dict(self.final_state_dict)
+        else:
+            g_0 = self.model.state_dict()
+            
+        train_on_device(self.model, epoch, lr, momentum, clip_grad_norm,self.root_loader)
+        g0 = self.model.state_dict()
+        g0_delta = self.subtract_state_dict(g0, g_0)
+        norm_g0 = torch.sqrt(sum(torch.norm(p) ** 2 for p in g0_delta.values()))
+        
+        weighted_updates = None
+        total_weight = 0.0
+        self.trust_scores = {}
+        self.updates = {}
+
+        for node_id in tqdm(self.selected_client):
+            local_model = self.find_weight(node_id)
+            local_delta = self.subtract_state_dict(local_model, g_0)
+            norm_gi = torch.sqrt(sum(torch.norm(p) ** 2 for p in local_delta.values()))
+            trust_score = max(0.0, self.cosine_similarity(local_delta, g0_delta))  # ReLU(cos_sim)
+            scale = (norm_g0 / (norm_gi + 1e-6)) * trust_score
+            scaled_update = self.normalize_update(local_delta, scale)
+            # Cộng dồn update
+            if weighted_updates is None:
+                weighted_updates = {k: v.clone() for k, v in scaled_update.items()}
+            else:
+                for k in weighted_updates:
+                    weighted_updates[k] += scaled_update[k]
+            total_weight += trust_score
+            self.trust_scores[node_id] = trust_score
+            self.updates[node_id] = scaled_update
+
+        # Final global update
+        for k in weighted_updates:
+            weighted_updates[k] /= (total_weight + 1e-6)
+        # Áp dụng global update vào model
+        new_state_dict = {k: g_0[k] + weighted_updates[k] for k in g_0}
+        self.final_state_dict = new_state_dict  
 
     def find_weight(self, node_id):
         for w in self.all_model_parameters:
