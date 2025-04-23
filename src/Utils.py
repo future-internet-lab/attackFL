@@ -1,7 +1,12 @@
 import copy
+import numpy as np
 import torch
 
 from torch.utils.data import Dataset
+from sklearn.mixture import GaussianMixture
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import DBSCAN
+from sklearn.decomposition import PCA
 
 
 class ICUData(Dataset):
@@ -207,3 +212,150 @@ def create_LIE_state_dict(list_dict, scaling_factor=0.74):
         malicious_state_dict[key] = stats['mean'] + scaling_factor * stats['std']
 
     return malicious_state_dict
+
+def cosine_similarity(state_dict1, state_dict2):
+    vector1 = torch.cat([param.flatten() for param in state_dict1.values()])
+    vector2 = torch.cat([param.flatten() for param in state_dict2.values()])
+    cos = torch.nn.CosineSimilarity(dim=0)
+    return cos(vector1, vector2)
+
+
+def byzantine_tolerance_aggregation(models, threshold=0.9):
+    """Lọc mô hình độc hại dựa trên độ tương đồng cosine."""
+    if len(models) == 0:
+        return None
+    global_weights = models[0]  # Giả sử mô hình đầu tiên là mô hình gốc
+    filtered_models = []
+
+    for weights in models:
+        sim = cosine_similarity(global_weights, weights)
+        if sim >= threshold:
+            filtered_models.append(weights)
+
+    if len(filtered_models) == 0:
+        print("[Warning] No model passed the similarity threshold. Using fallback.")
+        filtered_models = models  # Dùng toàn bộ nếu không có model nào hợp lệ
+
+    avg_weights = {}
+    for key in global_weights.keys():
+        avg_weights[key] = sum(w[key] for w in filtered_models) / len(filtered_models)
+
+    return avg_weights
+
+def get_weight_vector(state_dict):
+    """Chuyển trọng số của mô hình từ state_dict sang vector."""
+    weight_vector = []
+    for key in state_dict:
+        weight_vector.extend(state_dict[key].cpu().numpy().flatten())
+    return np.array(weight_vector)
+
+def train_gmm_model(benign_gradients, malicious_gradients, n_components=2):
+    """Huấn luyện mô hình Gaussian Mixture Model (GMM)."""
+    all_gradients = np.vstack((benign_gradients, malicious_gradients))
+    gmm = GaussianMixture(n_components=n_components, covariance_type='full')
+    gmm_model = gmm.fit(all_gradients)
+    return gmm_model
+
+def calculate_md(gradient, mean_vector, covariance_matrix):
+    """Tính Mahalanobis Distance giữa gradient và phân phối."""
+    delta = gradient - mean_vector
+    inv_covmat = np.linalg.inv(covariance_matrix)
+    md = np.sqrt(np.dot(np.dot(delta.T, inv_covmat), delta))
+    return md
+
+def verify_gradient(gradient, gmm_model, threshold):
+    """Kiểm tra gradient là benign hay malicious."""
+    probabilities = gmm_model.predict_proba([gradient])[0]
+    cluster = np.argmax(probabilities)
+    mean_vector = gmm_model.means_[cluster]
+    covariance_matrix = gmm_model.covariances_[cluster]
+
+    md = calculate_md(gradient, mean_vector, covariance_matrix)
+
+    if md > threshold:
+        return "malicious"
+    else:
+        return "benign"
+
+
+def krum(vectors, f):
+    """
+    Thực hiện thuật toán Krum để chọn trọng số "an toàn" nhất.
+    vectors: list các vector torch.Tensor (flatten model weights).
+    f: số lượng client độc hại giả định.
+    """
+    vectors_np = [v.detach().cpu().numpy() for v in vectors]
+    n = len(vectors_np)
+    scores = []
+
+    for i in range(n):
+        distances = [np.linalg.norm(vectors_np[i] - vectors_np[j])**2 for j in range(n) if j != i]
+        closest = sorted(distances)[:n - f - 2]
+        scores.append(sum(closest))
+
+    selected = vectors[np.argmin(scores)]
+    return selected
+
+def median_aggregation(models):
+    """
+    Thực hiện phép gộp trung vị (median) trên danh sách các mô hình (state_dict).
+    :param models: List các state_dict.
+    :return: state_dict sau khi gộp.
+    """
+    if not models:
+        return None
+
+    result = {}
+    for key in models[0].keys():
+        stacked = torch.stack([model[key] for model in models])
+        result[key] = torch.median(stacked, dim=0).values
+    return result
+
+
+def cosine(previous_embeddings, current_embedding):
+    # old embedding
+    embeddings_normal_history = np.array(previous_embeddings)
+    E_norm_nor = embeddings_normal_history / np.linalg.norm(embeddings_normal_history, axis=1, keepdims=True)
+
+    # new embedding
+    em_test = current_embedding / np.linalg.norm(current_embedding, axis=1, keepdims=True)
+    E_norm_mean = np.mean(E_norm_nor, axis=0)
+    cosine_similarity = np.dot(em_test, E_norm_mean) / (np.linalg.norm(em_test) * np.linalg.norm(E_norm_mean))
+
+    # Tính cosine similarity cho từng embedding trong history
+    cosine_history = np.sum(embeddings_normal_history * E_norm_mean, axis=1) / (
+        np.linalg.norm(embeddings_normal_history, axis=1) * np.linalg.norm(E_norm_mean)
+    )
+
+    # Tính ngưỡng động
+    mu = np.mean(cosine_history)
+    sigma = np.std(cosine_history)
+    sigma = max(sigma, 1e-6)
+
+    k = 2
+    threshold = mu - k * sigma
+    anomalies = cosine_similarity < threshold
+
+    if anomalies: print("Anomalies detection !!!")
+
+    return anomalies
+
+
+def DBSCAN_phase2(embeddings_before, embeddings_after, selected_clients, n_components=3, eps=0.015, min_samples=3):
+    embeddings_ = np.array([embeddings_after[client] for client in selected_clients])
+    embeddings = np.array([embeddings_before[client] for client in selected_clients])
+    delta = embeddings_ - embeddings
+
+    pca = PCA(n_components=n_components)
+    delta_3d = pca.fit_transform(delta)
+
+    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(delta_3d)
+
+    labels = clustering.labels_
+
+    outliers = np.where(labels == -1)[0]
+    outlier_clients = [selected_clients[i] for i in outliers]
+    # print("Các client bị tấn công ( phân cụm ):", [selected_clients[i] for i in outliers])
+
+    print("Các client bị tấn công ( phân cụm ):", outlier_clients)
+    return outlier_clients

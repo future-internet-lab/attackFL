@@ -4,18 +4,25 @@ import pickle
 import argparse
 import sys
 import yaml
-
+import numpy as np
 import torch
 import requests
 import random
+import copy
+
+from tqdm import tqdm
+from collections import deque, OrderedDict
+from requests.auth import HTTPBasicAuth
 
 import src.Validation
 import src.Log
 import src.Model
 
-from tqdm import tqdm
-from collections import OrderedDict
-from requests.auth import HTTPBasicAuth
+from src.Utils import calculate_md, train_gmm_model, verify_gradient
+from src.Utils import krum, get_weight_vector
+from src.Utils import byzantine_tolerance_aggregation, median_aggregation
+from src.Utils import cosine, DBSCAN_phase2
+
 
 parser = argparse.ArgumentParser(description="Split learning framework with controller.")
 
@@ -45,7 +52,6 @@ data_name = config["server"]["data-name"]
 address = config["rabbit"]["address"]
 username = config["rabbit"]["username"]
 password = config["rabbit"]["password"]
-
 num_round = config["server"]["num-round"]
 load_parameters = config["server"]["parameters"]["load"]
 validation = config["server"]["validation"]
@@ -56,12 +62,20 @@ data_distribution = config["server"]["data-distribution"]
 server_mode = config["server"]["mode"]
 data_range = data_distribution["num-data-range"]
 
+hyper_detection = config["server"]["hyper-detection"]
+hyper_detection_enable = hyper_detection["enable"]
+cosine_search = hyper_detection["cosine-search"]
+DBSCAN_n_components = hyper_detection["n_components"]
+DBSCAN_eps = hyper_detection["eps"]
+DBSCAN_min_samples = hyper_detection["min_samples"]
+
 # Clients
 epoch = config["learning"]["epoch"]
 batch_size = config["learning"]["batch-size"]
 lr = config["learning"]["learning-rate"]
 hyper_lr = config["learning"]["hyper-lr"]
 momentum = config["learning"]["momentum"]
+clip_grad_norm = config["learning"]["clip-grad-norm"]
 
 log_path = config["log_path"]
 
@@ -83,7 +97,7 @@ class Server:
         self.round = self.num_round
 
         self.channel.queue_declare(queue='rpc_queue')
-
+        self.genuine_rate = 0.0
         self.total_clients = total_clients
         self.current_clients = 0
         self.updated_clients = 0
@@ -94,12 +108,18 @@ class Server:
         self.all_genuine_parameters = []
         self.final_state_dict = None
         self.round_result = True
-
+        self.byzantine_ratio = 0.0
         self.selected_client = []
 
         # Initial hyper training model
         self.net = None
         self.hnet = None
+
+        # detection algorithms
+        self.previous_hyper = None
+        self.cosine_search = 10
+        self.list_embeddings = [deque(maxlen=self.cosine_search) for _ in range(self.total_clients)]
+
         if server_mode == "hyper":
             if not self.net and not self.hnet:
                 if hasattr(src.Model, model_name):
@@ -111,11 +131,13 @@ class Server:
                     filepath_hyper = f'{model_name}_hyper_{total_clients}.pth'
                     filepath = f'{model_name}.pth'
                     if os.path.exists(filepath_hyper):
+                        # if contain hyper model
                         src.Log.print_with_color(f"Load state dict from hyper model: {filepath_hyper}", "yellow")
                         state_dict = torch.load(filepath_hyper, weights_only=True)
                         self.load_new_hyper()
                         self.hnet.load_state_dict(state_dict)
                     elif os.path.exists(filepath):
+                        # if contain initial model
                         src.Log.print_with_color(f"Load state dict from original model: {filepath}", "yellow")
                         state_dict = torch.load(filepath, weights_only=True)
                         self.net.load_state_dict(state_dict)
@@ -218,34 +240,122 @@ class Server:
         :return:
         """
         self.updated_clients = 0
-        src.Log.print_with_color("Collected all parameters.", "yellow")
+        src.Log.print_with_color("Collected all parameters.", "yellow")    
+
         # TODO: detect model poisoning with self.all_model_parameters at here
         if self.round_result:
             if server_mode == "fedavg":
                 self.avg_all_parameters()
             elif server_mode == "hyper":
                 src.Log.print_with_color(f"Start training hyper model!", "yellow")
+                if hyper_detection_enable:
+                    self.previous_hyper = copy.deepcopy(self.hnet.state_dict())
                 self.train_hyper()
-            self.all_model_parameters = []
+            elif server_mode == "shieldfl":
+                src.Log.print_with_color(f"Using ShieldFL aggregation!", "yellow")
+                self.final_state_dict = byzantine_tolerance_aggregation(
+                    [model['weight'] for model in self.all_model_parameters], threshold=0.9
+                )
+            elif server_mode == "gmm":
+                src.Log.print_with_color(f"Using GMM-based gradient filtering!", "yellow")
+                
+                benign_gradients = [get_weight_vector(client['weight']) for client in self.all_model_parameters if client['client_id'] not in self.list_attack_clients]
+                malicious_gradients = [get_weight_vector(client['weight']) for client in self.all_model_parameters if client['client_id'] in self.list_attack_clients]
+
+                gmm_model = train_gmm_model(benign_gradients, malicious_gradients, n_components=2)
+
+                filtered_weights = []
+                threshold = 3 * np.std([calculate_md(g, gmm_model.means_[0], gmm_model.covariances_[0]) for g in benign_gradients])
+                
+                for client in self.all_model_parameters:
+                    gradient = get_weight_vector(client['weight'])
+                    result = verify_gradient(gradient, gmm_model, threshold)
+                    if result == "benign":
+                        filtered_weights.append(client['weight'])
+
+                if filtered_weights:
+                    self.final_state_dict = self.avg_selected_parameters(filtered_weights)
+                else:
+                    self.round_result = False
+            elif server_mode == "krum":
+                src.Log.print_with_color("Using Krum aggregation!", "yellow")
+                # Chuyển state_dict thành vector flatten
+                client_vectors = []
+                state_dict_map = {}
+
+                for client in self.all_model_parameters:
+                    vec = get_weight_vector(client['weight'])  # flatten model
+                    client_vectors.append(torch.tensor(vec, dtype=torch.float32))
+                    state_dict_map[vec.tobytes()] = client['weight']  # để ánh xạ lại
+
+                f = int(len(client_vectors) * self.genuine_rate)
+
+                selected_vector = krum(client_vectors, f)
+                selected_state_dict = state_dict_map[selected_vector.numpy().tobytes()]
+
+                self.final_state_dict = selected_state_dict
+            elif server_mode == "median":
+                src.Log.print_with_color(f"Using Median aggregation!", "yellow")
+                self.final_state_dict = median_aggregation(
+                    [model['weight'] for model in self.all_model_parameters]
+                )
+
+        if hyper_detection_enable:
+            to_remove = []
+            for i in self.selected_client:
+                _, current_embedding = self.hnet(torch.tensor([i], dtype=torch.long).to(device))
+                current_embedding = current_embedding.reshape(-1).tolist()
+                current_embedding = np.array(current_embedding)
+
+                # convert client indices to client id
+                # client_id = self.list_clients[i]
+
+                previous_embeddings = list(self.list_embeddings[i])
+                if cosine(previous_embeddings, current_embedding):
+                    to_remove.append(i)
+
+                self.list_embeddings[i].append(current_embedding)
+
+            # embedding round n and n-1
+            outliers = DBSCAN_phase2([sublist[-2] for sublist in self.list_embeddings],
+                                     [sublist[-1] for sublist in self.list_embeddings],
+                                     self.selected_client, n_components=DBSCAN_n_components, eps=DBSCAN_eps, min_samples=DBSCAN_min_samples)
+            print("Outliers từ DBSCAN:", outliers)
+
+            to_remove = list(set(to_remove) & set(outliers))
+
+            if to_remove:
+                for node_id in to_remove:
+                    print(f"Removing anomaly {node_id}, rolling back")
+                    self.selected_client.remove(node_id)
+
+                self.hnet.load_state_dict(self.previous_hyper)
+
         # Server validation
         if validation and self.round_result:
-            self.round_result = self.validation.test(self.final_state_dict, device)
+            if server_mode == "hyper":
+                self.round_result = self.validation.test_hyper(self.hnet, len(self.all_model_parameters), device)
+            else:
+                self.round_result = self.validation.test(self.final_state_dict, device)
 
+        self.all_model_parameters = []
         if not self.round_result:
             src.Log.print_with_color(f"Training failed!", "yellow")
         else:
             # Save to files
-            if server_mode == "fedavg":
-                torch.save(self.final_state_dict, f'{model_name}.pth')
-            elif server_mode == "hyper":
+            if server_mode == "hyper":
                 torch.save(self.hnet.state_dict(), f'{model_name}_hyper_{total_clients}.pth')
+            else:
+                torch.save(self.final_state_dict, f'{model_name}.pth')
+
             self.round -= 1
+
         self.round_result = True
 
         if self.round > 0:
             # Start a new training round
             src.Log.print_with_color(f"Start training round {self.num_round - self.round + 1}", "yellow")
-            self.client_selection()
+            # self.client_selection()
             self.notify_clients()
         else:
             # Stop training
@@ -262,14 +372,15 @@ class Server:
         if start:
             # Read parameters file
             state_dict = None
-            if server_mode == "fedavg":
+            if server_mode != "hyper":
                 if load_parameters:
                     filepath = f'{model_name}.pth'
                     if os.path.exists(filepath):
                         state_dict = torch.load(filepath, weights_only=True)
+
             for i in self.selected_client:
                 if server_mode == "hyper":
-                    state_dict = self.hnet(torch.tensor([i], dtype=torch.long).to(device))
+                    state_dict, _ = self.hnet(torch.tensor([i], dtype=torch.long).to(device))
                 # convert client indices to client id
                 client_id = self.list_clients[i]
                 # Request clients to start training
@@ -291,6 +402,7 @@ class Server:
                             "batch_size": batch_size,
                             "lr": lr,
                             "momentum": momentum,
+                            "clip_grad_norm": clip_grad_norm,
                             "genuine_models": genuine_models}
                 self.send_to_response(client_id, pickle.dumps(response))
             # clear all genuine models
@@ -322,7 +434,7 @@ class Server:
         """
         for node_id in tqdm(self.selected_client):
             self.hnet.train()
-            weights = self.hnet(torch.tensor([node_id], dtype=torch.long).to(device))
+            weights, _ = self.hnet(torch.tensor([node_id], dtype=torch.long).to(device))
 
             # Instead of loading weights directly, update net's parameters using the generated weights
             for name, param in self.net.named_parameters():
@@ -337,14 +449,11 @@ class Server:
 
             # Calculate gradients with respect to hypernetwork parameters
             hnet_grads = torch.autograd.grad(
-                # Get the outputs from the hypernetwork (weights)
                 outputs=list(weights.values()),
-                # Get the inputs that need gradients (hypernetwork parameters)
                 inputs=self.hnet.parameters(),
-                # Specify the gradient with respect to the outputs
                 grad_outputs=list(delta_theta.values()),
-                # Allows for unused parameters
-                allow_unused=True
+                retain_graph=True,
+                # allow_unused=True
             )
 
             # Update the hypernetwork parameters
@@ -353,7 +462,8 @@ class Server:
                 # if g is not None:
                 p.grad = g
 
-            # torch.nn.utils.clip_grad_norm_(self.hnet.parameters(), 50)
+            if clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.hnet.parameters(), clip_grad_norm)
             self.optimizer.step()
 
         # Update new clients' weight
@@ -361,10 +471,10 @@ class Server:
         for i in range(len(self.all_model_parameters)):
             c = self.list_clients.index(str(self.all_model_parameters[i]["client_id"]))
             print(f"Get client on index {c}")
-            model_dict = self.hnet(torch.tensor([c], dtype=torch.long).to(device))
+            model_dict, _ = self.hnet(torch.tensor([c], dtype=torch.long).to(device))
             self.all_model_parameters[i]["weight"] = model_dict
 
-        self.avg_all_parameters()
+        # self.avg_all_parameters()
 
     def find_weight(self, node_id):
         for w in self.all_model_parameters:
@@ -397,6 +507,28 @@ class Server:
 
         if not self.final_state_dict:
             src.Log.print_with_color(f"[Warning] Final state dict is None!", "yellow")
+
+    def avg_selected_parameters(self, selected_weights):
+        """
+        Tính trung bình các mô hình được chọn (sau khi lọc bằng GMM).
+        :param selected_weights: List các state_dict đã qua lọc.
+        :return: state_dict trung bình.
+        """
+        num_models = len(selected_weights)
+        if num_models == 0:
+            src.Log.print_with_color("Không có mô hình hợp lệ sau khi lọc GMM!", "red")
+            return None
+
+        # Copy mô hình đầu tiên làm mẫu
+        avg_weights = {k: selected_weights[0][k].clone() for k in selected_weights[0]}
+
+        for key in avg_weights.keys():
+            if avg_weights[key].dtype != torch.long:
+                avg_weights[key] = sum(model[key] for model in selected_weights) / num_models
+            else:
+                avg_weights[key] = sum(model[key] for model in selected_weights) // num_models
+
+        return avg_weights
 
     def load_new_hyper(self):
         self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
