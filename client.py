@@ -59,7 +59,7 @@ else:
 credentials = pika.PlainCredentials(username, password)
 
 
-def train_on_device(model, epoch, lr, momentum, trainloader):
+def train_on_device(model, epoch, lr, momentum, clip_grad_norm, trainloader):
     model.to(device)
     criterion = torch.nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -82,6 +82,8 @@ def train_on_device(model, epoch, lr, momentum, trainloader):
                 src.Log.print_with_color("NaN detected in loss, stop training", "yellow")
                 return False
 
+            if clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
             loss.backward()
             optimizer.step()
 

@@ -1,8 +1,14 @@
 name: Federated Learning poisoning attack testbed
 server:
   num-round: 50
-  clients: 1
+  clients: 5
   mode: hyper
+  hyper-detection:
+    enable: False
+    cosine-search: 10
+    n_components: 3
+    eps: 0.015
+    min_samples: 3
   model: TransformerModel
   data-name: ICU
   parameters:
@@ -10,8 +16,8 @@ server:
   validation: True
   data-distribution:
     num-data-range:
-      - 100
-      - 100
+      - 0
+      - 500
   genuine-rate: 0.5
   random-seed: 1
 
@@ -28,3 +34,4 @@ learning:
   hyper-lr: 0.0005
   momentum: 0.5
   batch-size: 128
+  clip-grad-norm: 0.0

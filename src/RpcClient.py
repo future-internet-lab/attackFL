@@ -145,6 +145,7 @@ class RpcClient:
         lr = self.response["lr"]
         momentum = self.response["momentum"]
         epoch = self.response["epoch"]
+        clip_grad_norm = self.response["clip_grad_norm"]
 
         if data_name and not self.train_set:
             if data_name == "ICU":
@@ -160,7 +161,7 @@ class RpcClient:
         train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
 
         # Stop training, then send parameters to server
-        return self.train_func(self.model, epoch, lr, momentum, train_loader), self.model.state_dict()
+        return self.train_func(self.model, epoch, lr, momentum, clip_grad_norm, train_loader), self.model.state_dict()
 
     def connect(self):
         credentials = pika.PlainCredentials(self.username, self.password)

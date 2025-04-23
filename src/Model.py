@@ -241,8 +241,7 @@ class HyperNetwork(nn.Module):
         ]
         for _ in range(n_hidden):
             layers.append(nn.ReLU(inplace=True))
-            layers.append(
-                spectral_norm(nn.Linear(hidden_dim, hidden_dim)) if spec_norm else nn.Linear(hidden_dim, hidden_dim), )
+            layers.append(spectral_norm(nn.Linear(hidden_dim, hidden_dim)) if spec_norm else nn.Linear(hidden_dim, hidden_dim))
 
         self.mlp = nn.Sequential(*layers)
 
@@ -284,4 +283,4 @@ class HyperNetwork(nn.Module):
                 target_weight_shape = self.target_model.state_dict()[original_name].shape
                 weights[original_name] = weight.view(target_weight_shape)
 
-        return weights
+        return weights, emd
