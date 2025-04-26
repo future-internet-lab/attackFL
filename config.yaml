@@ -1,8 +1,8 @@
 name: Federated Learning poisoning attack testbed
 server:
-  num-round: 50
+  num-round: 30
   clients: 1
-  mode: FLTrust # hyper
+  mode: FLTrust
   hyper-detection:
     enable: False
     cosine-search: 10
@@ -16,8 +16,8 @@ server:
   validation: True
   data-distribution:
     num-data-range:
-      - 0
-      - 500
+      - 5000
+      - 5000
   genuine-rate: 0.5
   random-seed: 1
 
@@ -30,8 +30,8 @@ log_path: .
 
 learning:
   epoch: 1
-  learning-rate: 0.0005
-  hyper-lr: 0.0005
+  learning-rate: 0.001
+  hyper-lr: 0.001
   momentum: 0.5
-  batch-size: 128
-  clip-grad-norm: 0.0
+  batch-size: 64
+  clip-grad-norm: 50.0

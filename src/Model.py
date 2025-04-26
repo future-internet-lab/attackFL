@@ -4,6 +4,24 @@ import torch.nn.functional as F
 
 from torch.nn.utils import spectral_norm
 from collections import OrderedDict
+from torch.utils.data import Dataset
+
+class ICUData(Dataset):
+    def __init__(self, dataframe, vitals_cols, labs_cols, label_col):
+        self.vitals = dataframe[vitals_cols].values  # Lấy dữ liệu Vitals
+        self.labs = dataframe[labs_cols].values  # Lấy dữ liệu Labs
+        self.labels = dataframe[label_col].values  # Lấy nhãn
+
+        # Chuyển đổi NaN thành giá trị phù hợp (nếu có)
+        self.vitals = torch.tensor(self.vitals, dtype=torch.float32)
+        self.labs = torch.tensor(self.labs, dtype=torch.float32)
+        self.labels = torch.tensor(self.labels, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        return self.vitals[idx], self.labs[idx], self.labels[idx]
 
 
 class CNNModel(nn.Module):
@@ -18,7 +36,7 @@ class CNNModel(nn.Module):
         self.vitals_conv2 = nn.Conv1d(32, 64, kernel_size=3, padding=1)
         self.vitals_conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
         self.vitals_pool = nn.AdaptiveAvgPool1d(4)  # Adaptive pooling để fix output shape
-        self.vitals_bn = nn.BatchNorm1d(128)
+        #self.vitals_bn = nn.BatchNorm1d(128)
         self.vitals_dropout = nn.Dropout(0.3)
 
         # Labs input branch
@@ -26,7 +44,7 @@ class CNNModel(nn.Module):
         self.labs_conv2 = nn.Conv1d(32, 64, kernel_size=3, padding=1)
         self.labs_conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
         self.labs_pool = nn.AdaptiveAvgPool1d(4)  # Adaptive pooling
-        self.labs_bn = nn.BatchNorm1d(128)
+        #self.labs_bn = nn.BatchNorm1d(128)
         self.labs_dropout = nn.Dropout(0.3)
 
         # Fully connected layers
@@ -45,7 +63,7 @@ class CNNModel(nn.Module):
         vitals = F.relu(self.vitals_conv2(vitals))
         vitals = F.relu(self.vitals_conv3(vitals))
         vitals = self.vitals_pool(vitals)  # (batch_size, 128, 4)
-        vitals = self.vitals_bn(vitals)
+        #vitals = self.vitals_bn(vitals)
         vitals = vitals.view(vitals.shape[0], -1)  # Flatten thành (batch_size, 128*4)
         vitals = self.vitals_dropout(vitals)
 
@@ -54,7 +72,7 @@ class CNNModel(nn.Module):
         labs = F.relu(self.labs_conv2(labs))
         labs = F.relu(self.labs_conv3(labs))
         labs = self.labs_pool(labs)  # (batch_size, 128, 4)
-        labs = self.labs_bn(labs)
+        #labs = self.labs_bn(labs)
         labs = labs.view(labs.shape[0], -1)  # Flatten
         labs = self.labs_dropout(labs)
 
@@ -283,4 +301,116 @@ class HyperNetwork(nn.Module):
                 target_weight_shape = self.target_model.state_dict()[original_name].shape
                 weights[original_name] = weight.view(target_weight_shape)
 
+        return weights, emd
+
+
+#hyper  ver2 
+
+class CNNHyper(nn.Module):
+    def __init__(self, n_nodes, embedding_dim, hidden_dim, n_hidden, spec_norm=False):
+        super().__init__()
+        # Embedding layer: nhận số lượng node và embedding dimension
+        self.embeddings = nn.Embedding(num_embeddings=n_nodes, embedding_dim=embedding_dim)
+
+        # Xây dựng MLP (feature extractor)
+        layers = [
+            spectral_norm(nn.Linear(embedding_dim, hidden_dim)) if spec_norm
+            else nn.Linear(embedding_dim, hidden_dim),
+        ]
+        for _ in range(n_hidden):
+            layers.append(nn.ReLU(inplace=True))
+            # Chú ý: dùng hidden_dim -> hidden_dim trong cả nhánh spectral norm và không spectral norm
+            layers.append(
+                spectral_norm(nn.Linear(hidden_dim, hidden_dim)) if spec_norm
+                else nn.Linear(hidden_dim, hidden_dim)
+            )
+        self.mlp = nn.Sequential(*layers)
+
+        # Sinh trọng số cho nhánh vitals
+        self.vitals_conv1_weights = nn.Linear(hidden_dim, 1 * 32 * 3)
+        self.vitals_conv1_bias = nn.Linear(hidden_dim, 32)
+        self.vitals_conv2_weights = nn.Linear(hidden_dim, 64 * 32 * 3)
+        self.vitals_conv2_bias = nn.Linear(hidden_dim, 64)
+        self.vitals_conv3_weights = nn.Linear(hidden_dim, 128 * 64 * 3)
+        self.vitals_conv3_bias = nn.Linear(hidden_dim, 128)
+
+        # Sinh trọng số cho nhánh labs
+        self.labs_conv1_weights = nn.Linear(hidden_dim, 1 * 32 * 3)
+        self.labs_conv1_bias = nn.Linear(hidden_dim, 32)
+        self.labs_conv2_weights = nn.Linear(hidden_dim, 64 * 32 * 3)
+        self.labs_conv2_bias = nn.Linear(hidden_dim, 64)
+        self.labs_conv3_weights = nn.Linear(hidden_dim, 128 * 64 * 3)
+        self.labs_conv3_bias = nn.Linear(hidden_dim, 128)
+
+        # Sinh trọng số cho các lớp Fully Connected
+        # fc1: shape (128, 1024) vì 128*2*4 = 1024
+        self.fc1_weights = nn.Linear(hidden_dim, 128 * (128 * 2 * 4))  # = 128 * 1024 = 131072 elements
+        self.fc1_bias = nn.Linear(hidden_dim, 128)
+        # fc2: shape (64, 128)
+        self.fc2_weights = nn.Linear(hidden_dim, 64 * 128)
+        self.fc2_bias = nn.Linear(hidden_dim, 64)
+        # fc3: shape (32, 64)
+        self.fc3_weights = nn.Linear(hidden_dim, 32 * 64)
+        self.fc3_bias = nn.Linear(hidden_dim, 32)
+        # output: shape (1, 32)
+        self.output_weights = nn.Linear(hidden_dim, 1 * 32)
+        self.output_bias = nn.Linear(hidden_dim, 1)
+
+        # Áp dụng spectral normalization nếu cần
+        if spec_norm:
+            self.vitals_conv1_weights = spectral_norm(self.vitals_conv1_weights)
+            self.vitals_conv1_bias = spectral_norm(self.vitals_conv1_bias)
+            self.vitals_conv2_weights = spectral_norm(self.vitals_conv2_weights)
+            self.vitals_conv2_bias = spectral_norm(self.vitals_conv2_bias)
+            self.vitals_conv3_weights = spectral_norm(self.vitals_conv3_weights)
+            self.vitals_conv3_bias = spectral_norm(self.vitals_conv3_bias)
+           
+            self.labs_conv1_weights = spectral_norm(self.labs_conv1_weights)
+            self.labs_conv1_bias = spectral_norm(self.labs_conv1_bias)
+            self.labs_conv2_weights = spectral_norm(self.labs_conv2_weights)
+            self.labs_conv2_bias = spectral_norm(self.labs_conv2_bias)
+            self.labs_conv3_weights = spectral_norm(self.labs_conv3_weights)
+            self.labs_conv3_bias = spectral_norm(self.labs_conv3_bias)
+           
+            self.fc1_weights = spectral_norm(self.fc1_weights)
+            self.fc1_bias = spectral_norm(self.fc1_bias)
+            self.fc2_weights = spectral_norm(self.fc2_weights)
+            self.fc2_bias = spectral_norm(self.fc2_bias)
+            self.fc3_weights = spectral_norm(self.fc3_weights)
+            self.fc3_bias = spectral_norm(self.fc3_bias)
+            self.output_weights = spectral_norm(self.output_weights)
+            self.output_bias = spectral_norm(self.output_bias)
+
+    def forward(self, idx):
+        emd = self.embeddings(idx)            # (batch_size, embedding_dim)
+        features = self.mlp(emd)                # (batch_size, hidden_dim)
+
+        weights = OrderedDict({
+            # Vitals branch
+            "vitals_conv1.weight": self.vitals_conv1_weights(features).view(32, 1, 3),
+            "vitals_conv1.bias": self.vitals_conv1_bias(features).view(-1),
+            "vitals_conv2.weight": self.vitals_conv2_weights(features).view(64, 32, 3),
+            "vitals_conv2.bias": self.vitals_conv2_bias(features).view(-1),
+            "vitals_conv3.weight": self.vitals_conv3_weights(features).view(128, 64, 3),
+            "vitals_conv3.bias": self.vitals_conv3_bias(features).view(-1),
+            
+            # Labs branch
+            "labs_conv1.weight": self.labs_conv1_weights(features).view(32, 1, 3),
+            "labs_conv1.bias": self.labs_conv1_bias(features).view(-1),
+            "labs_conv2.weight": self.labs_conv2_weights(features).view(64, 32, 3),
+            "labs_conv2.bias": self.labs_conv2_bias(features).view(-1),
+            "labs_conv3.weight": self.labs_conv3_weights(features).view(128, 64, 3),
+            "labs_conv3.bias": self.labs_conv3_bias(features).view(-1),
+      
+            # Fully Connected layers
+            "fc1.weight": self.fc1_weights(features).view(128, 128 * 2 * 4),  # (128, 1024)
+            "fc1.bias": self.fc1_bias(features).view(-1),
+            "fc2.weight": self.fc2_weights(features).view(64, 128),
+            "fc2.bias": self.fc2_bias(features).view(-1),
+            "fc3.weight": self.fc3_weights(features).view(32, 64),
+            "fc3.bias": self.fc3_bias(features).view(-1),
+            "output.weight": self.output_weights(features).view(1, 32),
+            "output.bias": self.output_bias(features).view(-1),
+            
+                    })
         return weights, emd

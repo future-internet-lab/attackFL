@@ -21,10 +21,13 @@ import src.Model
 
 from src.Utils import calculate_md, train_gmm_model, verify_gradient
 from src.Utils import krum, get_weight_vector
-from src.Utils import byzantine_tolerance_aggregation, median_aggregation
+from src.Utils import byzantine_tolerance_aggregation, median_aggregation, trimmed_mean_aggregation 
 from src.Utils import cosine, DBSCAN_phase2
+from src.Model import ICUData
 
 from client import*
+from torch.utils.data import Subset
+
 
 
 parser = argparse.ArgumentParser(description="Split learning framework with controller.")
@@ -134,27 +137,28 @@ class Server:
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
 
-                if load_parameters:
-                    filepath_hyper = f'{model_name}_hyper_{total_clients}.pth'
-                    filepath = f'{model_name}.pth'
-                    if os.path.exists(filepath_hyper):
-                        # if contain hyper model
-                        src.Log.print_with_color(f"Load state dict from hyper model: {filepath_hyper}", "yellow")
-                        state_dict = torch.load(filepath_hyper, weights_only=True)
-                        self.load_new_hyper()
-                        self.hnet.load_state_dict(state_dict)
-                    elif os.path.exists(filepath):
-                        # if contain initial model
-                        src.Log.print_with_color(f"Load state dict from original model: {filepath}", "yellow")
-                        state_dict = torch.load(filepath, weights_only=True)
-                        self.net.load_state_dict(state_dict)
-                        self.load_new_hyper()
-                    else:
-                        self.load_new_hyper()
-                else:
-                    self.load_new_hyper()
+                # if load_parameters:
+                #     filepath_hyper = f'{model_name}_hyper_{total_clients}.pth'
+                #     filepath = f'{model_name}.pth'
+                #     if os.path.exists(filepath_hyper):
+                #         # if contain hyper model
+                #         src.Log.print_with_color(f"Load state dict from hyper model: {filepath_hyper}", "yellow")
+                #         state_dict = torch.load(filepath_hyper, weights_only=True)
+                #         self.load_new_hyper()
+                #         self.hnet.load_state_dict(state_dict)
+                #     elif os.path.exists(filepath):
+                #         # if contain initial model
+                #         src.Log.print_with_color(f"Load state dict from original model: {filepath}", "yellow")
+                #         state_dict = torch.load(filepath, weights_only=True)
+                #         self.net.load_state_dict(state_dict)
+                #         self.load_new_hyper()
+                #     else:
+                #         self.load_new_hyper()
+                # else:
+                    # self.load_new_hyper()
+                self.load_new_hyper()
 
-            self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr=hyper_lr)
+            self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr = hyper_lr)
 
         if server_mode == "FLTrust":
             if not self.model:
@@ -279,18 +283,21 @@ class Server:
             if server_mode == "fedavg":
                 self.avg_all_parameters()
             if server_mode == "FLTrust":
-                
-                # with gzip.open("test_dataset.pkl.gz", "rb") as f:
-                #     root_dataset = pickle.load(f)
-                    
-                root_dataset = torch.load('root_FLTrust.pt')
-                self.root_loader = torch.utils.data.DataLoader(root_dataset , batch_size=100, shuffle=False)
+                with gzip.open("test_dataset.pkl.gz", "rb") as f:
+                    root_dataset = pickle.load(f)
+                D0 = Subset(root_dataset, range(200))
+                self.root_loader = torch.utils.data.DataLoader(D0 , batch_size=100, shuffle=False)
                 self.train_FLTrust()
             elif server_mode == "hyper":
                 src.Log.print_with_color(f"Start training hyper model!", "yellow")
                 if hyper_detection_enable:
-                    self.previous_hyper = copy.deepcopy(self.hnet.state_dict())
+                    self.previous_hyper = self.hnet.state_dict()
                 self.train_hyper()
+            elif server_mode == "trimmed_mean":
+                src.Log.print_with_color(f"Using  trimmed mean aggregation!", "yellow")
+                self.final_state_dict = trimmed_mean_aggregation(
+                    [model['weight'] for model in self.all_model_parameters]
+                )
             elif server_mode == "shieldfl":
                 src.Log.print_with_color(f"Using ShieldFL aggregation!", "yellow")
                 self.final_state_dict = byzantine_tolerance_aggregation(
@@ -473,17 +480,16 @@ class Server:
         Consuming all client's weight from `self.all_model_parameters` and start training hyper model
         :return: Global weight on `self.final_state_dict`
         """
+        self.hnet.train()
+        
         for node_id in tqdm(self.selected_client):
-            self.hnet.train()
-            weights, _ = self.hnet(torch.tensor([node_id], dtype=torch.long).to(device))
+            #self.hnet.train()
+            weights, _ = self.hnet(torch.tensor([node_id]).to(device))
 
-            # Instead of loading weights directly, update net's parameters using the generated weights
-            for name, param in self.net.named_parameters():
-                param.data = weights[name]
-
-            self.optimizer.zero_grad()
+            #self.optimizer.zero_grad()
 
             inner_state = OrderedDict({k: tensor.data for k, tensor in weights.items()})
+            self.optimizer.zero_grad()
             final_state = self.find_weight(node_id)         # get client's weight
             final_state = {k: v.to(device) for k, v in final_state.items()}
             delta_theta = OrderedDict({k: inner_state[k] - final_state[k] for k in weights.keys()})
@@ -492,9 +498,7 @@ class Server:
             hnet_grads = torch.autograd.grad(
                 outputs=list(weights.values()),
                 inputs=self.hnet.parameters(),
-                grad_outputs=list(delta_theta.values()),
-                retain_graph=True,
-                # allow_unused=True
+                grad_outputs=list(delta_theta.values())
             )
 
             # Update the hypernetwork parameters
@@ -505,6 +509,7 @@ class Server:
 
             if clip_grad_norm > 0:
                 torch.nn.utils.clip_grad_norm_(self.hnet.parameters(), clip_grad_norm)
+            
             self.optimizer.step()
 
         # Update new clients' weight
@@ -512,7 +517,7 @@ class Server:
         for i in range(len(self.all_model_parameters)):
             c = self.list_clients.index(str(self.all_model_parameters[i]["client_id"]))
             print(f"Get client on index {c}")
-            model_dict, _ = self.hnet(torch.tensor([c], dtype=torch.long).to(device))
+            model_dict, _ = self.hnet(torch.tensor([c]).to(device))
             self.all_model_parameters[i]["weight"] = model_dict
 
         # self.avg_all_parameters()
@@ -579,7 +584,7 @@ class Server:
         # Áp dụng global update vào model
         new_state_dict = {k: g_0[k] + weighted_updates[k] for k in g_0}
         self.final_state_dict = new_state_dict  
-
+        
     def find_weight(self, node_id):
         for w in self.all_model_parameters:
             if str(w["client_id"]) == self.list_clients[node_id]:
@@ -635,8 +640,9 @@ class Server:
         return avg_weights
 
     def load_new_hyper(self):
-        self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
-
+        # self.hnet = src.Model.HyperNetwork(self.net, self.total_clients, 3, 100, False, 1).to(device)
+        self.hnet = src.Model.CNNHyper(self.total_clients, 10 , 100, 3).to(device)
+        
 def delete_old_queues():
     url = f'http://{address}:15672/api/queues'
     response = requests.get(url, auth=HTTPBasicAuth(username, password))

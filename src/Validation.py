@@ -16,13 +16,12 @@ import src.Log
 
 from tqdm import tqdm
 
-
 class Validation:
     def __init__(self, model_name, data_name, logger):
         self.data_name = data_name
         self.logger = logger
         self.model = None
-
+        
         if hasattr(src.Model, model_name):
             self.model = getattr(src.Model, model_name)()
         else:
@@ -31,7 +30,7 @@ class Validation:
         if self.data_name:
             # Load test_dataset
             if self.data_name == "ICU":
-                with gzip.open("test_dataset.pkl.gz", "rb") as f:
+                with gzip.open("/home/quanhhh/Documents/attackFL/test_dataset.pkl.gz", "rb") as f:
                     test_dataset = pickle.load(f)
             elif self.data_name == "CIFAR10":
                 transform_test = transforms.Compose([
@@ -43,7 +42,7 @@ class Validation:
             else:
                 raise ValueError(f"Data name '{data_name}' is not valid.")
 
-            self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=100, shuffle=False)
+            self.test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=64, shuffle=False)
 
     def test(self, final_state_dict, device):
         try:
@@ -145,6 +144,7 @@ class Validation:
                 correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
 
         test_loss /= len(self.test_loader.dataset)
+        
         accuracy = 100.0 * correct / len(self.test_loader.dataset)
         print('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
             test_loss, correct, len(self.test_loader.dataset), accuracy))
@@ -162,7 +162,7 @@ class Validation:
         all_outputs = []
 
         for i in range(num_client):
-            state_dict = hnet(torch.tensor([i], dtype=torch.long).to(device))
+            state_dict, _ = hnet(torch.tensor([i], dtype=torch.long).to(device))
             self.model.load_state_dict(state_dict)
             # evaluation mode
             self.model.eval()

@@ -213,6 +213,8 @@ def create_LIE_state_dict(list_dict, scaling_factor=0.74):
 
     return malicious_state_dict
 
+#defence 
+
 def cosine_similarity(state_dict1, state_dict2):
     vector1 = torch.cat([param.flatten() for param in state_dict1.values()])
     vector2 = torch.cat([param.flatten() for param in state_dict2.values()])
@@ -255,6 +257,47 @@ def train_gmm_model(benign_gradients, malicious_gradients, n_components=2):
     gmm = GaussianMixture(n_components=n_components, covariance_type='full')
     gmm_model = gmm.fit(all_gradients)
     return gmm_model
+
+#trimmed mean defence 
+import torch
+
+def trimmed_mean_aggregation(models, trim_ratio=0.1):
+    """
+    Thực hiện trimmed mean aggregation trên danh sách các state_dict.
+    
+    Args:
+        models (List[dict]): List các state_dict của các client models.
+        trim_ratio (float): Tỉ lệ bị loại bỏ ở mỗi đầu (ví dụ 0.1 = 10%).
+
+    Returns:
+        dict: state_dict sau khi trimmed mean.
+    """
+    if not models:
+        return None
+
+    num_clients = len(models)
+    trim_k = int(num_clients * trim_ratio)
+    
+    if 2 * trim_k >= num_clients:
+        raise ValueError("Số lượng client quá ít so với trim_ratio đã chọn.")
+
+    result = {}
+
+    for key in models[0].keys():
+        # Stack tất cả tensors cùng key thành 1 tensor 2D: (num_clients, ...)
+        stacked = torch.stack([model[key] for model in models], dim=0)
+        
+        # Flatten theo batch, sort theo giá trị từng phần tử
+        sorted_vals, _ = torch.sort(stacked, dim=0)
+        
+        # Trim: bỏ trim_k nhỏ nhất và trim_k lớn nhất
+        trimmed = sorted_vals[trim_k : num_clients - trim_k]
+
+        # Tính trung bình sau khi trim
+        result[key] = torch.mean(trimmed, dim=0)
+
+    return result
+
 
 def calculate_md(gradient, mean_vector, covariance_matrix):
     """Tính Mahalanobis Distance giữa gradient và phân phối."""
