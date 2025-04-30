@@ -414,3 +414,45 @@ class CNNHyper(nn.Module):
             
                     })
         return weights, emd
+
+### ICU HAR
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=600):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
+        pe[:, 0::2] = torch.sin(pos * div)
+        pe[:, 1::2] = torch.cos(pos * div)
+        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1), :]  # (batch, seq_len, d_model)
+        return x
+
+class TransformerClassifier(nn.Module):
+    def __init__(self, d_model=64, nhead=4, num_layers=2, num_classes=6):
+        super().__init__()
+        self.conv = nn.Conv1d(1, d_model, kernel_size=3, padding=1)  # (Btrain_dataset, d_model, 561)
+        self.pe = PositionalEncoding(d_model)
+
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=256, dropout=0.1)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, 64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.conv(x)         # (B, d_model, 561)
+        x = x.permute(0, 2, 1)   # (B, 561, d_model)
+        x = self.pe(x)           # Add positional encoding
+        x = x.permute(1, 0, 2)   # Transformer needs (seq_len, batch, d_model)
+        x = self.transformer(x) # (seq_len, batch, d_model)
+        x = x.mean(dim=0)       # Global average pooling
+        return self.classifier(x)

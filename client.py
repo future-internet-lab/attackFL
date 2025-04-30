@@ -5,7 +5,7 @@ import yaml
 import sys
 from tqdm import tqdm
 
-import numpy as np 
+import numpy as np
 
 import torch
 import torch.optim as optim
@@ -60,24 +60,29 @@ else:
     device = args.device
     print(f"Using device: {device}")
 
-
 credentials = pika.PlainCredentials(username, password)
 
 
-def train_on_device(model, epoch, lr, momentum, clip_grad_norm, trainloader):
+def train_on_device(model, data_name, epoch, lr, momentum, clip_grad_norm, trainloader):
+    if data_name == "ICU":
+        return train_ICU(model, epoch, lr, momentum, clip_grad_norm, trainloader)
+    elif data_name == "HAR":
+        return train_HAR(model, epoch, lr, momentum, clip_grad_norm, trainloader)
+    else:
+        raise ValueError(f"Data name '{data_name}' is not valid.")
+
+
+def train_ICU(model, epoch, lr, momentum, clip_grad_norm, trainloader):
     model.to(device)
     criterion = torch.nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    #model.train()
     for _ in range(epoch):
         epoch_loss = 0.0
-        loss = 0.0
-        roc_auc = 0.0
         for vitals, labs, labels in tqdm(trainloader):
             model.train()
             optimizer.zero_grad()
-            
+
             if vitals.size(0) == 1 or labs.size(0) == 1:
                 continue
             vitals = vitals.to(device)
@@ -89,9 +94,8 @@ def train_on_device(model, epoch, lr, momentum, clip_grad_norm, trainloader):
             output = model(vitals, labs)
             loss = criterion(output, labels)
             epoch_loss += loss.item()
-            
-            loss_ = epoch_loss/len(trainloader)
 
+            loss_ = epoch_loss / len(trainloader)
 
             if torch.isnan(loss).any():
                 src.Log.print_with_color("NaN detected in loss, stop training", "yellow")
@@ -103,35 +107,27 @@ def train_on_device(model, epoch, lr, momentum, clip_grad_norm, trainloader):
             optimizer.step()
 
         src.Log.print_with_color(f"Loss {loss_} ", "yellow")
-        
-        # all_labels = []
-        # all_outputs = []
 
-        # with torch.no_grad():
-        #     model.eval()
-        #     for vitals, labs, labels in tqdm(testloader):
-        #         vitals = vitals.to(device)
-        #         labs = labs.to(device)
-        #         labels = labels.to(device).unsqueeze(1)
+    return True
 
-        #         # Forward pass
-        #         outputs = model(vitals,labs)
 
-        #         # Append the true labels and predicted outputs
-        #         all_labels.append(labels.cpu().numpy())
-        #         all_outputs.append(outputs.cpu().numpy())
+def train_HAR(model, epoch, lr, momentum, clip_grad_norm, trainloader):
+    model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = torch.nn.CrossEntropyLoss()
 
-        # # Concatenate all labels and outputs
-        # all_labels = np.concatenate(all_labels)
-        # all_outputs = np.concatenate(all_outputs)
-
-        # # Calculate ROC curve
-        # fpr, tpr, thresholds = roc_curve(all_labels, all_outputs)
-        # roc_auc = auc(fpr, tpr)
-
-        # print(f"ROC_AUC: {roc_auc:.4f}")
-    
-     
+    for e in range(epoch):
+        model.train()
+        total_loss = 0
+        for xb, yb in tqdm(trainloader):
+            xb, yb = xb.to(device), yb.to(device)
+            optimizer.zero_grad()
+            output = model(xb)
+            loss = loss_fn(output, yb)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        print(f"Epoch {e + 1}, Loss: {total_loss:.4f}")
     return True
 
 

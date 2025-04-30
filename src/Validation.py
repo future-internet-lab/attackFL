@@ -30,7 +30,10 @@ class Validation:
         if self.data_name:
             # Load test_dataset
             if self.data_name == "ICU":
-                with gzip.open("/home/quanhhh/Documents/attackFL/test_dataset.pkl.gz", "rb") as f:
+                with gzip.open("test_dataset.pkl.gz", "rb") as f:
+                    test_dataset = pickle.load(f)
+            elif data_name == "HAR":
+                with gzip.open("icu_har_test_ds.pkl.gz", "rb") as f:
                     test_dataset = pickle.load(f)
             elif self.data_name == "CIFAR10":
                 transform_test = transforms.Compose([
@@ -56,6 +59,8 @@ class Validation:
         self.model.eval()
         if self.data_name == "ICU":
             return self.test_icu(device)
+        elif self.data_name == "HAR":
+            return self.test_har(device)
         elif self.data_name == "CIFAR10":
             return self.test_image(device)
         else:
@@ -114,6 +119,20 @@ class Validation:
         print(f"ROC_AUC: {roc_auc:.4f}")
         self.logger.log_info(f"ROC_AUC: {roc_auc:.4f}")
 
+        return True
+
+    def test_har(self, device):
+        self.model.eval()
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for xb, yb in self.test_loader:
+                xb, yb = xb.to(device), yb.to(device)
+                preds = self.model(xb).argmax(dim=1)
+                correct += (preds == yb).sum().item()
+                total += yb.size(0)
+
+        print(f"Test Accuracy: {correct / total:.4f}")
         return True
 
     def test_hyper(self, hnet, num_client, device):

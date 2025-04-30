@@ -2,7 +2,7 @@ name: Federated Learning poisoning attack testbed
 server:
   num-round: 30
   clients: 1
-  mode: FLTrust
+  mode: fedavg
   hyper-detection:
     enable: False
     cosine-search: 10
@@ -23,8 +23,8 @@ server:
 
 rabbit:
   address: 127.0.0.1
-  username: thuong 
-  password: thuong
+  username: admin
+  password: admin
 
 log_path: .
 

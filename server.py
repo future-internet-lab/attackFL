@@ -137,28 +137,28 @@ class Server:
                 else:
                     raise ValueError(f"Model name '{model_name}' is not valid.")
 
-                # if load_parameters:
-                #     filepath_hyper = f'{model_name}_hyper_{total_clients}.pth'
-                #     filepath = f'{model_name}.pth'
-                #     if os.path.exists(filepath_hyper):
-                #         # if contain hyper model
-                #         src.Log.print_with_color(f"Load state dict from hyper model: {filepath_hyper}", "yellow")
-                #         state_dict = torch.load(filepath_hyper, weights_only=True)
-                #         self.load_new_hyper()
-                #         self.hnet.load_state_dict(state_dict)
-                #     elif os.path.exists(filepath):
-                #         # if contain initial model
-                #         src.Log.print_with_color(f"Load state dict from original model: {filepath}", "yellow")
-                #         state_dict = torch.load(filepath, weights_only=True)
-                #         self.net.load_state_dict(state_dict)
-                #         self.load_new_hyper()
-                #     else:
-                #         self.load_new_hyper()
-                # else:
-                    # self.load_new_hyper()
+                if load_parameters:
+                    filepath_hyper = f'{model_name}_hyper_{total_clients}.pth'
+                    filepath = f'{model_name}.pth'
+                    if os.path.exists(filepath_hyper):
+                        # if contain hyper model
+                        src.Log.print_with_color(f"Load state dict from hyper model: {filepath_hyper}", "yellow")
+                        state_dict = torch.load(filepath_hyper, weights_only=True)
+                        self.load_new_hyper()
+                        self.hnet.load_state_dict(state_dict)
+                    elif os.path.exists(filepath):
+                        # if contain initial model
+                        src.Log.print_with_color(f"Load state dict from original model: {filepath}", "yellow")
+                        state_dict = torch.load(filepath, weights_only=True)
+                        self.net.load_state_dict(state_dict)
+                        self.load_new_hyper()
+                    else:
+                        self.load_new_hyper()
+                else:
+                    self.load_new_hyper()
                 self.load_new_hyper()
 
-            self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr = hyper_lr)
+            self.optimizer = torch.optim.Adam(self.hnet.parameters(), lr=hyper_lr)
 
         if server_mode == "FLTrust":
             if not self.model:
@@ -483,10 +483,7 @@ class Server:
         self.hnet.train()
         
         for node_id in tqdm(self.selected_client):
-            #self.hnet.train()
             weights, _ = self.hnet(torch.tensor([node_id]).to(device))
-
-            #self.optimizer.zero_grad()
 
             inner_state = OrderedDict({k: tensor.data for k, tensor in weights.items()})
             self.optimizer.zero_grad()

@@ -4,6 +4,7 @@ import pika
 import torch
 import random
 import gzip
+import pandas as pd
 
 from pika.exceptions import AMQPConnectionError
 
@@ -154,22 +155,19 @@ class RpcClient:
             if data_name == "ICU":
                 with gzip.open("train_dataset.pkl.gz", "rb") as f:
                     self.train_set = pickle.load(f)
-                
-                with gzip.open("test_dataset.pkl.gz", "rb") as f:
-                    self.test_dataset = pickle.load(f)
+            if data_name == "HAR":
+                with gzip.open("icu_har_train_ds.pkl.gz", "rb") as f:
+                    self.train_set = pickle.load(f)
             else:
                 raise ValueError(f"Data name '{data_name}' is not valid.")
 
-
         selected_indices = random.sample(range(len(self.train_set)), num_data)
         subset = torch.utils.data.Subset(self.train_set, selected_indices)
-        
-       
-        test_loader = torch.utils.data.DataLoader(self.test_dataset, batch_size=128, shuffle=False)
+
         train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
         
         # Stop training, then send parameters to server
-        return self.train_func(self.model, epoch, lr, momentum, clip_grad_norm, train_loader), self.model.state_dict()
+        return self.train_func(self.model, data_name, epoch, lr, momentum, clip_grad_norm, train_loader), self.model.state_dict()
 
     def connect(self):
         credentials = pika.PlainCredentials(self.username, self.password)
