@@ -30,10 +30,10 @@ class Validation:
         if self.data_name:
             # Load test_dataset
             if self.data_name == "ICU":
-                with gzip.open("test_dataset.pkl.gz", "rb") as f:
+                with gzip.open("data/test_dataset.pkl.gz", "rb") as f:
                     test_dataset = pickle.load(f)
             elif data_name == "HAR":
-                with gzip.open("icu_har_test_ds.pkl.gz", "rb") as f:
+                with gzip.open("data/icu_har_test_ds.pkl.gz", "rb") as f:
                     test_dataset = pickle.load(f)
             elif self.data_name == "CIFAR10":
                 transform_test = transforms.Compose([

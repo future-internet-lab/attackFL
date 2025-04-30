@@ -153,10 +153,10 @@ class RpcClient:
 
         if data_name and not self.train_set:
             if data_name == "ICU":
-                with gzip.open("train_dataset.pkl.gz", "rb") as f:
+                with gzip.open("data/train_dataset.pkl.gz", "rb") as f:
                     self.train_set = pickle.load(f)
             if data_name == "HAR":
-                with gzip.open("icu_har_train_ds.pkl.gz", "rb") as f:
+                with gzip.open("data/icu_har_train_ds.pkl.gz", "rb") as f:
                     self.train_set = pickle.load(f)
             else:
                 raise ValueError(f"Data name '{data_name}' is not valid.")

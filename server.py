@@ -283,7 +283,7 @@ class Server:
             if server_mode == "fedavg":
                 self.avg_all_parameters()
             if server_mode == "FLTrust":
-                with gzip.open("test_dataset.pkl.gz", "rb") as f:
+                with gzip.open("data/test_dataset.pkl.gz", "rb") as f:
                     root_dataset = pickle.load(f)
                 D0 = Subset(root_dataset, range(200))
                 self.root_loader = torch.utils.data.DataLoader(D0 , batch_size=100, shuffle=False)
